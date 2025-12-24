@@ -19,7 +19,18 @@ type copyData struct {
 // resize performs the actual resize operations on the given disk
 func resize(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool) error {
 	// loop through each resize, create the new partition, and copy the data over
+	if err := createPartitions(d, resizes, dryRun); err != nil {
+		return err
+	}
 
+	if err := copyFilesystems(resizes, d, dryRun); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func createPartitions(d *disk.Disk, resizes []partitionResizeTarget, dryRun bool) error {
 	// first create the new partitions in the partition table and write it
 	tableRaw, err := d.GetPartitionTable()
 	if err != nil {
@@ -54,8 +65,10 @@ func resize(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool) error {
 	if err := d.Partition(table); err != nil {
 		return fmt.Errorf("failed to write updated partition table: %v", err)
 	}
+	return nil
+}
 
-	// second, do the copy
+func copyFilesystems(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool) error {
 	// it depends on the filesystem type:
 	// - squashfs, ext4, unknown: raw data copy
 	// - fat32: use filesystem copy
@@ -111,6 +124,7 @@ func resize(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool) error {
 		default:
 			return fmt.Errorf("unsupported filesystem type %v for partition %s", fs.Type(), r.original.label)
 		}
+
 	}
 	return nil
 }
