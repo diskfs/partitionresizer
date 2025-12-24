@@ -27,6 +27,14 @@ func resize(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool) error {
 		return err
 	}
 
+	var oldPartitions []int
+	for _, r := range resizes {
+		oldPartitions = append(oldPartitions, r.original.number)
+	}
+	if err := removePartitions(d, oldPartitions, dryRun); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -125,6 +133,32 @@ func copyFilesystems(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool)
 			return fmt.Errorf("unsupported filesystem type %v for partition %s", fs.Type(), r.original.label)
 		}
 
+	}
+	return nil
+}
+
+func removePartitions(d *disk.Disk, partitions []int, dryRun bool) error {
+	// first create the new partitions in the partition table and write it
+	tableRaw, err := d.GetPartitionTable()
+	if err != nil {
+		return err
+	}
+	table, ok := tableRaw.(*gpt.Table)
+	if !ok {
+		return fmt.Errorf("unsupported partition table type, only GPT is supported")
+	}
+	for _, partitionNumber := range partitions {
+		log.Printf("removing old partition %d", partitionNumber)
+		if dryRun {
+			log.Printf("dry run enabled, skipping remove of partition %d", partitionNumber)
+			continue
+		}
+		// get existing partition info
+		table.Partitions[partitionNumber-1].Type = gpt.Unused
+	}
+	// write the updated partition table
+	if err := d.Partition(table); err != nil {
+		return fmt.Errorf("failed to write updated partition table: %v", err)
 	}
 	return nil
 }
