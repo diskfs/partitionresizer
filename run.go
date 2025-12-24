@@ -26,7 +26,7 @@ func Run(disk string, shrinkPartition *PartitionIdentifier, growPartitions []Par
 	for _, gp := range growPartitions {
 		partIdentifiers = append(partIdentifiers, gp)
 	}
-	disks, err := findDisks(disk)
+	disks, err := findDisks(disk, "")
 	if err != nil {
 		return fmt.Errorf("failed to find disks: %v", err)
 	}

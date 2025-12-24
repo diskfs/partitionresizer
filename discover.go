@@ -9,15 +9,21 @@ import (
 	"strings"
 )
 
-const sysClassBlockPath = "/sys/class/block"
+const (
+	sysDefaultPath = "/sys"
+)
 
 // findDisks find all disks and their partitions, including reference name and parition position.
 // If a specific disk is given, only that disk is returned.
-func findDisks(disk string) (map[string][]partitionData, error) {
+func findDisks(disk, syspath string) (map[string][]partitionData, error) {
 	var (
 		candidates []os.DirEntry
 		err        error
 	)
+	if syspath == "" {
+		syspath = sysDefaultPath
+	}
+	sysClassBlockPath := filepath.Join(syspath, "class", "block")
 	// which candidates to check, depends if we were given a specific disk or not
 	if disk != "" {
 		// only check the given disk
