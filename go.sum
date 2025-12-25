@@ -12,6 +12,8 @@ github.com/diskfs/go-diskfs v1.7.1-0.20251224080715-af2e622a7b02 h1:4FLeNk89TX6s
 github.com/diskfs/go-diskfs v1.7.1-0.20251224080715-af2e622a7b02/go.mod h1:02SN/PNyJRmOlwuJ8FcE1OkPFcMPvAoFUZCAvsE3Ty4=
 github.com/diskfs/go-diskfs v1.7.1-0.20251224114056-9957489e44b2 h1:KClb97VTivvcxTmiEXTsBribwu5aDp2soAfSUzGIv7E=
 github.com/diskfs/go-diskfs v1.7.1-0.20251224114056-9957489e44b2/go.mod h1:02SN/PNyJRmOlwuJ8FcE1OkPFcMPvAoFUZCAvsE3Ty4=
+github.com/diskfs/go-diskfs v1.7.1-0.20251225135645-ac87b76f953c h1:pwfSEkfTCk6JhJXIIXm9qUMNMY1+kNdi8sGC0nU+SNo=
+github.com/diskfs/go-diskfs v1.7.1-0.20251225135645-ac87b76f953c/go.mod h1:02SN/PNyJRmOlwuJ8FcE1OkPFcMPvAoFUZCAvsE3Ty4=
 github.com/djherbis/times v1.6.0 h1:w2ctJ92J8fBvWPxugmXIv7Nz7Q3iDMKNx9v5ocVH20c=
 github.com/djherbis/times v1.6.0/go.mod h1:gOHeRAz2h+VJNZ5Gmc/o7iD9k4wW7NMVqieYCY99oc0=
 github.com/elliotwutingfeng/asciiset v0.0.0-20230602022725-51bbb787efab h1:h1UgjJdAAhj+uPL68n7XASS6bU+07ZX1WJvVS2eyoeY=
