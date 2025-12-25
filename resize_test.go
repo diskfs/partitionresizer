@@ -6,6 +6,8 @@ import (
 
 	"github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/backend/file"
+	"github.com/diskfs/go-diskfs/disk"
+	"github.com/diskfs/go-diskfs/filesystem"
 	"github.com/diskfs/go-diskfs/partition/gpt"
 )
 
@@ -190,5 +192,107 @@ func TestRemovePartitions(t *testing.T) {
 	expectedCount := len(table.Partitions) - len(toRemove)
 	if len(newTable.Partitions) != expectedCount {
 		t.Fatalf("expected %d partitions after resize, got %d", expectedCount, len(newTable.Partitions))
+	}
+}
+
+func TestCopyFilesystems(t *testing.T) {
+	tests := []struct {
+		name   string
+		fsType filesystem.Type
+	}{
+		{
+			name:   "ext4 filesystem",
+			fsType: filesystem.TypeExt4,
+		},
+		{
+			name:   "squashfs filesystem",
+			fsType: filesystem.TypeSquashfs,
+		},
+		{
+			name:   "fat32 filesystem",
+			fsType: filesystem.TypeFat32,
+		},
+		{
+			name: "unknown filesystem",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// create a disk with a partition with the specified filesystem type
+			workDir := t.TempDir()
+			f, err := os.CreateTemp(workDir, "disk.img")
+			if err != nil {
+				t.Fatalf("failed to create temp disk image: %v", err)
+			}
+			if err := os.Truncate(f.Name(), 1*GB); err != nil {
+				t.Fatalf("failed to truncate disk image: %v", err)
+			}
+			defer func() { _ = f.Close() }()
+
+			backend := file.New(f, false)
+			d, err := diskfs.OpenBackend(backend, diskfs.WithOpenMode(diskfs.ReadWrite))
+			if err != nil {
+				t.Fatalf("failed to open disk: %v", err)
+			}
+			var offset uint64 = 2048
+			table := &gpt.Table{
+				Partitions: []*gpt.Partition{
+					{
+						Start:      offset,
+						Size:       100 * MB,
+						Type:       gpt.LinuxFilesystem,
+						Name:       "part1",
+						Attributes: 0,
+					},
+					{
+						Start:      offset + 100*MB,
+						Size:       150 * MB,
+						Type:       gpt.LinuxFilesystem,
+						Name:       "part2",
+						Attributes: 0,
+					},
+				},
+			}
+			if err := d.Partition(table); err != nil {
+				t.Fatalf("failed to write partition table: %v", err)
+			}
+			// create filesystem on first partition
+			fs, err := d.CreateFilesystem(disk.FilesystemSpec{
+				Partition: 1,
+				FSType:    tt.fsType,
+			})
+			if err != nil {
+				t.Fatalf("failed to create filesystem on partition 1: %v", err)
+			}
+			// define resize target
+			resizes := []partitionResizeTarget{
+				{
+					original: partitionData{
+						number: 1,
+						start:  int64(offset),
+						size:   int64(table.Partitions[0].Size),
+						label:  table.Partitions[0].Name,
+					},
+					target: partitionData{
+						number: 2,
+						start:  int64(offset + 300*MB),
+						size:   int64(table.Partitions[0].Size),
+						label:  "part1_resized",
+					},
+				},
+			}
+			// call copyFilesystems
+			if err := copyFilesystems(resizes, d, false); err != nil {
+				t.Fatalf("copyFilesystems failed: %v", err)
+			}
+			// verify filesystem copied
+			newFS, err := d.GetFilesystem(2)
+			if err != nil {
+				t.Fatalf("failed to get filesystem on new partition: %v", err)
+			}
+			if newFS.Type() != fs.Type() {
+				t.Errorf("filesystem type mismatch: expected %v, got %v", fs.Type(), newFS.Type())
+			}
+		})
 	}
 }
