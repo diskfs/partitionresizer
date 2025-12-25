@@ -9,6 +9,7 @@ import (
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/filesystem"
 	"github.com/diskfs/go-diskfs/partition/gpt"
+	"github.com/diskfs/go-diskfs/partition/part"
 )
 
 type copyData struct {
@@ -102,7 +103,8 @@ func copyFilesystems(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool)
 			}()
 
 			written, err := d.WritePartitionContents(r.target.number, pr)
-			if err != nil {
+			var ierr *part.IncompletePartitionWriteError
+			if err != nil && !errors.As(err, &ierr) {
 				return fmt.Errorf("failed to write raw data for partition %s: %v", r.original.label, err)
 			}
 
