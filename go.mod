@@ -3,7 +3,7 @@ module github.com/deitch/partitionresizer
 go 1.24.2
 
 require (
-	github.com/diskfs/go-diskfs v1.7.1-0.20251225142007-111da05d9430
+	github.com/diskfs/go-diskfs v1.7.1-0.20251226120352-a2e25398499a
 	github.com/spf13/cobra v1.10.2
 )
 
