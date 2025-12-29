@@ -24,8 +24,8 @@ func partitionIdentifiersToData(disk partition.Table, diskPartitionData []partit
 			var match bool
 			switch pi.By() {
 			case IdentifierByName:
-				sysPart, ok := namePartMapping[pi.Value()]
-				if ok && sysPart.start == p.GetStart() {
+				_, ok := namePartMapping[pi.Value()]
+				if ok {
 					match = true
 				}
 			case IdentifierByLabel:

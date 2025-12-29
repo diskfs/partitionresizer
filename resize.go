@@ -83,10 +83,10 @@ func copyFilesystems(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool)
 	// - fat32: use filesystem copy
 	for _, r := range resizes {
 		if dryRun {
-			log.Printf("dry run enabled, skipping data copy for partition %s", r.original.label)
+			log.Printf("dry run enabled, skipping data copy from original partition %d to new partition %d", r.original.number, r.target.number)
 			continue
 		}
-		log.Printf("copying data for partition %s from original to new partition", r.original.label)
+		log.Printf("copying data from original partition %d to new partition %d", r.original.number, r.target.number)
 		fs, err := d.GetFilesystem(r.original.number)
 		switch {
 		case err != nil && !errors.Is(err, &disk.UnknownFilesystemError{}):

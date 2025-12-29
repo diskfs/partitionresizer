@@ -31,23 +31,16 @@ func calculateResizes(size int64, parts []*gpt.Partition, partitionResizes []par
 	// now go through each of the grow partitions and find space for them
 	for i, gp := range partitionResizes {
 		found := false
-		for _, u := range unused {
-			availableSize := u.end - u.start + 1 // +1 because both start and end are inclusive
-			if availableSize >= gp.original.size {
-				// found space, so save it and update the target info
+		for j := 0; j < len(unused); j++ {
+			u := &unused[j]
+			available := u.end - u.start + 1
+			if available >= gp.target.size {
+				// allocate at the start of this gap
 				gp.target.start = u.start
 				gp.target.end = u.start + gp.target.size - 1
-				// update the unused block
 				u.start += gp.target.size
 				if u.start > u.end {
-					// remove this unused block
-					var newUnused []usableBlock
-					for _, uu := range unused {
-						if uu != u {
-							newUnused = append(newUnused, uu)
-						}
-					}
-					unused = newUnused
+					unused = append(unused[:j], unused[j+1:]...)
 				}
 				found = true
 				break
@@ -56,6 +49,7 @@ func calculateResizes(size int64, parts []*gpt.Partition, partitionResizes []par
 		if !found {
 			return nil, NewInsufficientSpaceError(partitionResizes[i].original.label, partitionResizes[i].target.size)
 		}
+		resizes = append(resizes, gp)
 	}
 
 	return resizes, nil
@@ -70,8 +64,8 @@ func computeUnused(size int64, used []usableBlock) []usableBlock {
 		// gap before this used block
 		if u.start > prevEnd {
 			unused = append(unused, usableBlock{
-				start: prevEnd,
-				end:   u.start,
+				start: prevEnd + 1,
+				end:   u.start - 1,
 			})
 		}
 		prevEnd = u.end
@@ -80,8 +74,8 @@ func computeUnused(size int64, used []usableBlock) []usableBlock {
 	// gap after last used block
 	if prevEnd < size {
 		unused = append(unused, usableBlock{
-			start: prevEnd,
-			end:   size,
+			start: prevEnd + 1,
+			end:   size - 1,
 		})
 	}
 

@@ -14,6 +14,9 @@ func CopyFileSystem(src fs.FS, dst filesystem.FileSystem) error {
 		if err != nil {
 			return err
 		}
+		if path == "." || path == "/" || path == "\\" {
+			return nil
+		}
 
 		info, err := d.Info()
 		if err != nil {
@@ -43,7 +46,7 @@ func copyOneFile(src fs.FS, dst filesystem.FileSystem, path string, info fs.File
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := dst.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY)
+	out, err := dst.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR)
 	if err != nil {
 		return err
 	}

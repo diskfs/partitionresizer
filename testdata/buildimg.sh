@@ -37,8 +37,7 @@ set +x
 i=0; until [ $i -gt 10000 ]; do mkdir foo/dir${i}; i=$(( $i+1 )); done
 set -x
 # create a file with known content
-dd if=/dev/random of=/data/random.dat bs=1024 count=20
-cp /data/random.dat random.dat
+dd if=/dev/random of=random.dat bs=1024 count=20
 # symlink to a file and to a dead-end
 ln -s random.dat symlink.dat
 ln -s /random.dat absolutesymlink
@@ -63,7 +62,7 @@ echo 'This is a short file' > SHORT.txt
 dd if=/dev/zero 'of=A large name file with spaces' bs=1024 count=2
 dd if=/dev/zero 'of=longer_name_without' bs=1024 count=6
 dd if=/dev/zero 'of=Large Name with spaces and numbers 7.dat' bs=1024 count=7
-dd if=/dev/zero 'of=foo/bar/some_long_embedded_nameא' bs=1024 count=7
+dd if=/dev/zero 'of=foo/bar/some_long_embedded_name' bs=1024 count=7
 echo low > lower83/LOW.low
 echo upp > lower83/UPP.upp
 echo Lower > lower83/lower.low

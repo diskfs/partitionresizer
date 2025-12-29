@@ -111,7 +111,13 @@ func findDisks(disk, syspath string) (map[string][]partitionData, error) {
 			}
 			name := child.Name()
 			// find partition children
-			id, err := readSysIntValue(filepath.Join(sysClassBlockPath, candidate.Name(), name, "partition"))
+			partitionInfoFile := filepath.Join(sysClassBlockPath, candidate.Name(), name, "partition")
+			if _, err := os.Stat(partitionInfoFile); err != nil {
+				// not a partition
+				continue
+			}
+			// read partition info: number, size, start
+			id, err := readSysIntValue(partitionInfoFile)
 			if err != nil {
 				return nil, err
 			}
