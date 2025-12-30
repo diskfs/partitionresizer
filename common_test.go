@@ -44,12 +44,12 @@ func testCopyFile(infile, outfile string) error {
 	if err != nil {
 		return fmt.Errorf("Error opening input file: %w", err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	out, err := os.Create(outfile)
 	if err != nil {
 		return fmt.Errorf("Error opening output file: %w", err)
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	if _, err := io.Copy(out, in); err != nil {
 		return fmt.Errorf("Error copying file contents: %w", err)
 	}

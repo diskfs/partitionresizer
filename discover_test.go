@@ -21,12 +21,16 @@ func TestParseKeyValueLines(t *testing.T) {
 func TestReadSysIntValue(t *testing.T) {
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "val")
-	os.WriteFile(p, []byte("123\n"), 0644)
+	if err := os.WriteFile(p, []byte("123\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	v, err := readSysIntValue(p)
 	if err != nil || v != 123 {
 		t.Fatalf("readSysIntValue(123\n) = (%d,%v), want (123,nil)", v, err)
 	}
-	os.WriteFile(p, []byte("456\r"), 0644)
+	if err := os.WriteFile(p, []byte("456\r"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	v, err = readSysIntValue(p)
 	if err != nil || v != 456 {
 		t.Fatalf("readSysIntValue(456\r) = (%d,%v), want (456,nil)", v, err)
@@ -58,16 +62,26 @@ func TestFindDisks_Simple(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(diskDir, "queue"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(diskDir, "queue", "logical_block_size"), []byte("512\n"), 0644)
+	if err := os.WriteFile(filepath.Join(diskDir, "queue", "logical_block_size"), []byte("512\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	// create one partition: sdx1
 	part := filepath.Join(diskDir, "sdx1")
 	if err := os.Mkdir(part, 0755); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(part, "partition"), []byte("1\n"), 0644)
-	os.WriteFile(filepath.Join(part, "start"), []byte("2\n"), 0644)
-	os.WriteFile(filepath.Join(part, "size"), []byte("4\n"), 0644)
-	os.WriteFile(filepath.Join(part, "uevent"), []byte("PARTNAME=foo\n"), 0644)
+	if err := os.WriteFile(filepath.Join(part, "partition"), []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(part, "start"), []byte("2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(part, "size"), []byte("4\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(part, "uevent"), []byte("PARTNAME=foo\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	disks, err := findDisks("", tmp)
 	if err != nil {

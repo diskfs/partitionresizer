@@ -14,12 +14,6 @@ import (
 	"github.com/diskfs/go-diskfs/partition/gpt"
 )
 
-const (
-	KB = 1024
-	MB = 1024 * KB
-	GB = 1024 * MB
-)
-
 func TestCreatePartitions(t *testing.T) {
 	// create a disk with GPT partitions, call createPartitions, verify partitions created correctly
 	workDir := t.TempDir()
@@ -93,7 +87,7 @@ func TestCreatePartitions(t *testing.T) {
 		},
 	}
 	// call createPartitions
-	if err := createPartitions(d, resizes, false); err != nil {
+	if err := createPartitions(d, resizes); err != nil {
 		t.Fatalf("createPartitions failed: %v", err)
 	}
 	// verify partitions created
@@ -180,7 +174,7 @@ func TestRemovePartitions(t *testing.T) {
 	toRemove := []int{2, 3}
 
 	// call removePartitions
-	if err := removePartitions(d, toRemove, false); err != nil {
+	if err := removePartitions(d, toRemove); err != nil {
 		t.Fatalf("removePartitions failed: %v", err)
 	}
 	// verify partitions removed
@@ -267,7 +261,7 @@ func TestCopyFilesystems(t *testing.T) {
 		t.Fatalf("failed to write updated partition table: %v", err)
 	}
 	// call copyFilesystems
-	if err := copyFilesystems(resizes, d, false); err != nil {
+	if err := copyFilesystems(d, resizes); err != nil {
 		t.Fatalf("copyFilesystems failed: %v", err)
 	}
 	// get old FS
@@ -284,7 +278,7 @@ func TestCopyFilesystems(t *testing.T) {
 		t.Errorf("filesystem type mismatch: expected %v, got %v", fs.Type(), newFS.Type())
 	}
 	// check that the contents match
-	iofs.WalkDir(fs, ".", func(path string, d iofs.DirEntry, err error) error {
+	if err := iofs.WalkDir(fs, ".", func(path string, d iofs.DirEntry, err error) error {
 		if err != nil {
 			t.Fatalf("error walking original filesystem: %v", err)
 		}
@@ -330,5 +324,9 @@ func TestCopyFilesystems(t *testing.T) {
 			t.Errorf("file content mismatch for %s: expected %q, got %q", path, string(origData), string(newData))
 		}
 		return nil
-	})
+	}); err != nil {
+		t.Fatalf("error walking original filesystem: %v", err)
+	}
+}
+func TestShrinkFilesystems(t *testing.T) {
 }

@@ -18,13 +18,21 @@ type copyData struct {
 }
 
 // resize performs the actual resize operations on the given disk
-func resize(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool) error {
-	// loop through each resize, create the new partition, and copy the data over
-	if err := createPartitions(d, resizes, dryRun); err != nil {
+func resize(d *disk.Disk, resizes []partitionResizeTarget) error {
+	// do any shrinks first
+	if err := shrinkFilesystems(d, resizes); err != nil {
+		return err
+	}
+	if err := shrinkPartitions(d, resizes); err != nil {
 		return err
 	}
 
-	if err := copyFilesystems(resizes, d, dryRun); err != nil {
+	// next create new partitions
+	if err := createPartitions(d, resizes); err != nil {
+		return err
+	}
+
+	if err := copyFilesystems(d, resizes); err != nil {
 		return err
 	}
 
@@ -32,14 +40,14 @@ func resize(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool) error {
 	for _, r := range resizes {
 		oldPartitions = append(oldPartitions, r.original.number)
 	}
-	if err := removePartitions(d, oldPartitions, dryRun); err != nil {
+	if err := removePartitions(d, oldPartitions); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func createPartitions(d *disk.Disk, resizes []partitionResizeTarget, dryRun bool) error {
+func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	// first create the new partitions in the partition table and write it
 	tableRaw, err := d.GetPartitionTable()
 	if err != nil {
@@ -51,11 +59,11 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget, dryRun bool
 	}
 	partitions := table.Partitions
 	for _, r := range resizes {
-		log.Printf("resizing partition %s: original %+v, target %+v", r.original.label, r.original, r.target)
-		if dryRun {
-			log.Printf("dry run enabled, skipping resize of partition %s", r.original.label)
+		if r.original.size == r.target.size && r.original.start == r.target.start {
+			log.Printf("skipping creation of partition %s, no size or location change", r.original.label)
 			continue
 		}
+		log.Printf("resizing partition %s: original %+v, target %+v", r.original.label, r.original, r.target)
 		// get existing partition info
 		orig := partitions[r.original.number-1]
 		// create the new partition
@@ -77,15 +85,11 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget, dryRun bool
 	return nil
 }
 
-func copyFilesystems(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool) error {
+func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 	// it depends on the filesystem type:
 	// - squashfs, ext4, unknown: raw data copy
 	// - fat32: use filesystem copy
 	for _, r := range resizes {
-		if dryRun {
-			log.Printf("dry run enabled, skipping data copy from original partition %d to new partition %d", r.original.number, r.target.number)
-			continue
-		}
 		log.Printf("copying data from original partition %d to new partition %d", r.original.number, r.target.number)
 		fs, err := d.GetFilesystem(r.original.number)
 		switch {
@@ -139,7 +143,7 @@ func copyFilesystems(resizes []partitionResizeTarget, d *disk.Disk, dryRun bool)
 	return nil
 }
 
-func removePartitions(d *disk.Disk, partitions []int, dryRun bool) error {
+func removePartitions(d *disk.Disk, partitions []int) error {
 	// first create the new partitions in the partition table and write it
 	tableRaw, err := d.GetPartitionTable()
 	if err != nil {
@@ -151,16 +155,61 @@ func removePartitions(d *disk.Disk, partitions []int, dryRun bool) error {
 	}
 	for _, partitionNumber := range partitions {
 		log.Printf("removing old partition %d", partitionNumber)
-		if dryRun {
-			log.Printf("dry run enabled, skipping remove of partition %d", partitionNumber)
-			continue
-		}
 		// get existing partition info
 		table.Partitions[partitionNumber-1].Type = gpt.Unused
 	}
 	// write the updated partition table
 	if err := d.Partition(table); err != nil {
 		return fmt.Errorf("failed to write updated partition table: %v", err)
+	}
+	return nil
+}
+
+func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
+	for _, r := range resizes {
+		if r.original.size <= r.target.size {
+			log.Printf("partition %d does not require shrinking, skipping", r.original.number)
+			continue
+		}
+		log.Printf("shrinking filesystem %d %s from %d to %d bytes", r.original.number, r.original.label, r.original.size, r.target.size)
+		// verify ext4 fs on shrink partition
+		fs, err := d.GetFilesystem(r.original.number)
+		if err != nil {
+			return fmt.Errorf("failed to get filesystem for shrink partition: %v", err)
+		}
+		if fs.Type() != filesystem.TypeExt4 {
+			return fmt.Errorf("unsupported filesystem type for shrinking: %v", fs.Type())
+		}
+
+		// perform the shrink
+		if err := shrinkFilesystem(r.target, r.original.size-r.target.size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func shrinkPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
+	table, ok := d.Table.(*gpt.Table)
+	var resizeCount int
+	if !ok {
+		return fmt.Errorf("unsupported partition table type, only GPT is supported")
+	}
+	for _, r := range resizes {
+		if r.original.size <= r.target.size {
+			log.Printf("partition %d does not require shrinking, skipping", r.original.number)
+			continue
+		}
+		log.Printf("Resizing partition %d to %d bytes", r.original.number, r.target.size)
+		// Update GPT entry for the shrink partition (indexed by number-1)
+		table.Partitions[r.original.number-1].Size = uint64(r.target.size)
+		resizeCount++
+	}
+	if resizeCount == 0 {
+		return nil
+	}
+	if err := d.Partition(table); err != nil {
+		return fmt.Errorf("failed to write partition table after shrinking: %v", err)
 	}
 	return nil
 }

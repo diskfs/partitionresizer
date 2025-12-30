@@ -20,12 +20,12 @@ func partitionIdentifiersToData(disk partition.Table, diskPartitionData []partit
 	var data []partitionData
 	for _, pi := range partitionIDs {
 		found := false
-		for i, p := range parts {
+		for _, p := range parts {
 			var match bool
 			switch pi.By() {
 			case IdentifierByName:
-				_, ok := namePartMapping[pi.Value()]
-				if ok {
+				mapped, ok := namePartMapping[pi.Value()]
+				if ok && mapped.number == p.GetIndex() {
 					match = true
 				}
 			case IdentifierByLabel:
@@ -43,7 +43,7 @@ func partitionIdentifiersToData(disk partition.Table, diskPartitionData []partit
 					size:   p.GetSize(),
 					start:  p.GetStart(),
 					end:    p.GetStart() + p.GetSize() - 1,
-					number: i,
+					number: p.GetIndex(),
 				})
 				found = true
 				break

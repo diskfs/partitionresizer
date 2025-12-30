@@ -4,6 +4,7 @@ go 1.24.2
 
 require (
 	github.com/diskfs/go-diskfs v1.7.1-0.20251229131233-69d81d3afc36
+	github.com/go-test/deep v1.0.8
 	github.com/spf13/cobra v1.10.2
 )
 
