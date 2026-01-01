@@ -32,13 +32,13 @@ func TestShrinkFilesystem(t *testing.T) {
 	t.Run("error", func(t *testing.T) {
 		orig := execResize2fs
 		defer func() { execResize2fs = orig }()
-		execResize2fs = func(_ string, _ int64) error {
+		execResize2fs = func(_ string, _, _ int64) error {
 			return fmt.Errorf("resize failure")
 		}
 
 		data := partitionData{name: "pY", number: 1, size: 5 * 1024 * 1024}
 		totalGrow := int64(1 * 1024 * 1024)
-		err := shrinkFilesystem(data, totalGrow)
+		err := shrinkFilesystem(filepath.Join("/dev", data.name), data, totalGrow)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -49,11 +49,13 @@ func TestShrinkFilesystem(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		var calledDevice string
 		var calledMB int64
+		var calledStart int64
 		orig := execResize2fs
 		defer func() { execResize2fs = orig }()
-		execResize2fs = func(dev string, mb int64) error {
+		execResize2fs = func(dev string, start int64, mb int64) error {
 			calledDevice = dev
 			calledMB = mb
+			calledStart = start
 			return nil
 		}
 
@@ -61,9 +63,10 @@ func TestShrinkFilesystem(t *testing.T) {
 			name:   "pX",
 			number: 3,
 			size:   10 * 1024 * 1024, // 10MB
+			start:  2048,
 		}
 		totalGrow := int64(2 * 1024 * 1024) // 2MB
-		if err := shrinkFilesystem(data, totalGrow); err != nil {
+		if err := shrinkFilesystem(filepath.Join("/dev", data.name), data, totalGrow); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -74,6 +77,9 @@ func TestShrinkFilesystem(t *testing.T) {
 		wantMB := (data.size - totalGrow) / (1024 * 1024)
 		if calledMB != wantMB {
 			t.Errorf("newSizeMB = %d, want %d", calledMB, wantMB)
+		}
+		if calledStart != data.start {
+			t.Errorf("start = %d, want %d", calledStart, data.start)
 		}
 	})
 }

@@ -182,7 +182,11 @@ func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 		}
 
 		// perform the shrink
-		if err := shrinkFilesystem(r.target, r.original.size-r.target.size); err != nil {
+		p := d.Backend.Path()
+		if p == "" {
+			return fmt.Errorf("cannot shrink filesystem: disk backend has no path")
+		}
+		if err := shrinkFilesystem(p, r.target, r.original.size-r.target.size); err != nil {
 			return err
 		}
 	}

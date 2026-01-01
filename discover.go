@@ -3,22 +3,36 @@ package partitionresizer
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/diskfs/go-diskfs"
+	"github.com/diskfs/go-diskfs/backend/file"
+	"github.com/diskfs/go-diskfs/partition/gpt"
 )
 
 const (
 	sysDefaultPath = "/sys"
 )
 
-// findDisks find all disks and their partitions, including reference name and parition position.
-// If a specific disk is given, only that disk is returned.
+// findDisks find all disks and their partitions, including reference name and partition position.
+// Does so entirely via sysfs. If the 'disk' parameter is non-empty,
+// scans for all disks, otherwise just for the given disk. Example, if disk is "/dev/sda", only /sys/class/block/sda is scanned,
+// otherwise all disks under /sys/class/block are scanned.
+//
+// If the 'syspath' parameter is non-empty, uses that as the base sysfs path instead of /sys.
+//
+// If the 'disk' parameter is not a device, but rather an image file, i.e. cannot be found under /sys/class/block,
+// then it tries to get partition data by scanning it as a disk image directly. In that case, the
+// identifier ByName is not valid, since that name only is relevant for block devices recognized by the kernel
+// and visible via sysfs.
 func findDisks(disk, syspath string) (map[string][]partitionData, error) {
 	var (
-		candidates []os.DirEntry
-		err        error
+		candidates []iofs.FileInfo
 	)
 	if syspath == "" {
 		syspath = sysDefaultPath
@@ -26,35 +40,64 @@ func findDisks(disk, syspath string) (map[string][]partitionData, error) {
 	sysClassBlockPath := filepath.Join(syspath, "class", "block")
 	// which candidates to check, depends if we were given a specific disk or not
 	if disk != "" {
-		// only check the given disk
+		// only check the given disk, which might be a device or an image file
 		base := filepath.Base(disk)
-		info, err := os.Stat(filepath.Join(sysClassBlockPath, base))
-		if err != nil {
+		diskSysPath := filepath.Join(sysClassBlockPath, base)
+		info, err := os.Stat(diskSysPath)
+		switch {
+		case err != nil && !errors.Is(err, iofs.ErrNotExist):
 			return nil, err
-		}
-		if !info.IsDir() {
-			return nil, os.ErrNotExist
-		}
-		de, err := os.ReadDir(sysClassBlockPath)
-		if err != nil {
-			return nil, err
-		}
-		found := false
-		for _, d := range de {
-			if d.Name() == base {
-				candidates = append(candidates, d)
-				found = true
-				break
+		case err != nil:
+			// file does not exist under sysfs, so try to open as disk image and get partition info that way
+			f, err := os.Open(disk)
+			if err != nil {
+				return nil, err
 			}
-		}
-		if !found {
-			return nil, os.ErrNotExist
+			backend := file.New(f, false)
+			d, err := diskfs.OpenBackend(backend)
+			if err != nil {
+				return nil, err
+			}
+			tableRaw, err := d.GetPartitionTable()
+			if err != nil {
+				return nil, err
+			}
+			table, ok := tableRaw.(*gpt.Table)
+			if !ok {
+				return nil, errors.New("unsupported partition table type, only GPT is supported")
+			}
+			var parts []partitionData
+			for _, p := range table.Partitions {
+				// no name field
+				start := int64(p.Start) * int64(d.LogicalBlocksize)
+				pd := partitionData{
+					label:  p.Name,
+					uuid:   p.UUID(),
+					size:   p.GetSize(),
+					start:  start,
+					end:    start + p.GetSize() - 1,
+					number: p.Index,
+				}
+				parts = append(parts, pd)
+			}
+			allDisks := make(map[string][]partitionData)
+			allDisks[base] = parts
+			return allDisks, nil
+		default:
+			candidates = append(candidates, info)
 		}
 	} else {
 		// check all findDisks
-		candidates, err = os.ReadDir(sysClassBlockPath)
+		candidatesDE, err := os.ReadDir(sysClassBlockPath)
 		if err != nil {
 			return nil, err
+		}
+		for _, de := range candidatesDE {
+			info, err := de.Info()
+			if err != nil {
+				return nil, err
+			}
+			candidates = append(candidates, info)
 		}
 	}
 	var allDisks = make(map[string][]partitionData)

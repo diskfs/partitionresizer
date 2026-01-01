@@ -6,22 +6,25 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/partition/gpt"
 )
 
 // execResize2fs is the function used to invoke resize2fs; overridden in tests.
-var execResize2fs = func(partDevice string, newSizeMB int64) error {
-	cmd := exec.Command("resize2fs", partDevice, fmt.Sprintf("%dM", newSizeMB))
+var execResize2fs = func(partDevice string, start int64, newSizeMB int64) error {
+	// TODO: handle start offset if needed for disk images with multiple partitions
+	cmd := exec.Command("resize2fs", "-E", fmt.Sprintf("offset=%d", start), partDevice, fmt.Sprintf("%dM", newSizeMB))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-// shrinkFilesystem shrinks an ext4 filesystem
+// shrinkFilesystem shrinks an ext4 filesystem, given a full path to the device and partition data
+// Should account for it being a disk image with multiple partitions if needed, i.e. not just an entire disk,
+// using the information in shrinkData.
 func shrinkFilesystem(
+	device string,
 	shrinkData partitionData,
 	totalGrow int64,
 ) error {
@@ -31,9 +34,8 @@ func shrinkFilesystem(
 		"Resizing filesystem on partition %d to %d MB to make space for growing other partitions",
 		shrinkData.number, newSizeMB,
 	)
-	partDevice := filepath.Join("/dev", shrinkData.name)
-	if err := execResize2fs(partDevice, newSizeMB); err != nil {
-		return fmt.Errorf("failed to run resize2fs on %s: %w", partDevice, err)
+	if err := execResize2fs(device, shrinkData.start, newSizeMB); err != nil {
+		return fmt.Errorf("failed to run resize2fs on %s: %w", device, err)
 	}
 	return nil
 }

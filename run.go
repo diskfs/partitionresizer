@@ -3,7 +3,6 @@ package partitionresizer
 import (
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/backend/file"
@@ -26,30 +25,26 @@ func Run(disk string, shrinkPartition *PartitionIdentifier, growPartitions []Par
 	if err != nil {
 		return fmt.Errorf("failed to find disks: %v", err)
 	}
-	matchedDisks, err := filterDisksByPartitions(disks, partIdentifiers)
+	filteredDisks, err := filterDisksByPartitions(disks, partIdentifiers)
 	if err != nil {
 		return fmt.Errorf("failed to filter disks by partiton: %v", err)
 	}
-	if len(matchedDisks) == 0 {
+	if len(filteredDisks) == 0 {
 		return fmt.Errorf("no disks found matching specified partitions")
 	}
-	if len(matchedDisks) > 1 {
-		return fmt.Errorf("multiple disks found matching specified partitions: %+v", matchedDisks)
+	if len(filteredDisks) > 1 {
+		return fmt.Errorf("multiple disks found matching specified partitions: %+v", filteredDisks)
 	}
-	disk = matchedDisks[0]
-	diskPartitionData := disks[disk]
-	log.Printf("Using disk: %s", disk)
+	matchedDisk := filteredDisks[0]
+	diskPartitionData := disks[matchedDisk]
+	log.Printf("Using disk: %s via path %s", matchedDisk, disk)
 
 	// now we have the desired disk, either passed explicitly or found by discovery
 
-	// get a handle on the disk
-	f, err := os.Open(disk)
+	backend, err := file.OpenFromPath(disk, false)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-
-	backend := file.New(f, true)
 	d, err := diskfs.OpenBackend(backend)
 	if err != nil {
 		return err
