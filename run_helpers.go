@@ -6,15 +6,20 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/partition/gpt"
 )
 
-// execResize2fs is the function used to invoke resize2fs; overridden in tests.
-var execResize2fs = func(partDevice string, start int64, newSizeMB int64) error {
-	// TODO: handle start offset if needed for disk images with multiple partitions
-	cmd := exec.Command("resize2fs", "-E", fmt.Sprintf("offset=%d", start), partDevice, fmt.Sprintf("%dM", newSizeMB))
+const (
+	partTmpFilename = "partresizer-shrinkfs-XXXXXXXX"
+)
+
+// execResize2fs is the function used to invoke resize2fs. partDevice may be a block device pointing to the actual
+// filesystem partition, or an image file with the filesystem at byte 0.
+var execResize2fs = func(partDevice string, newSizeMB int64) error {
+	cmd := exec.Command("resize2fs", partDevice, fmt.Sprintf("%dM", newSizeMB))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -34,10 +39,41 @@ func shrinkFilesystem(
 		"Resizing filesystem on partition %d to %d MB to make space for growing other partitions",
 		shrinkData.number, newSizeMB,
 	)
-	if err := execResize2fs(device, shrinkData.start, newSizeMB); err != nil {
-		return fmt.Errorf("failed to run resize2fs on %s: %w", device, err)
+	f, err := os.Open(device)
+	if err != nil {
+		return err
 	}
-	return nil
+	deviceType, err := disk.DetermineDeviceType(f)
+	if err != nil {
+		return err
+	}
+	switch deviceType {
+	case disk.DeviceTypeBlockDevice:
+		return execResize2fs(device, newSizeMB)
+	case disk.DeviceTypeFile:
+		// copy the partition, then resize it, then copy it back into the original disk image
+		tmpDir := os.TempDir()
+		tmpFileName := filepath.Join(tmpDir, partTmpFilename)
+		f, err := os.Create(tmpFileName)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = f.Close()
+			_ = os.RemoveAll(tmpDir)
+		}()
+		// copy the file over
+		if err := CopyRange(device, tmpFileName, shrinkData.start, 0, shrinkData.size, 0); err != nil {
+			return fmt.Errorf("copy to temp file: %w", err)
+		}
+		if err := execResize2fs(tmpFileName, newSizeMB); err != nil {
+			return err
+		}
+		err = CopyRange(tmpFileName, device, 0, shrinkData.start, shrinkData.size, 0)
+	case disk.DeviceTypeUnknown:
+		err = fmt.Errorf("unknown device type for %s", device)
+	}
+	return err
 }
 
 // planResizes computes the resize plan, including both growing the relevant partitions as well as

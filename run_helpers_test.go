@@ -1,9 +1,10 @@
 package partitionresizer
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/diskfs/go-diskfs/disk"
@@ -29,10 +30,10 @@ func makeTable(sizes ...int64) *gpt.Table {
 
 // TestShrinkFilesystem verifies that an error from execResize2fs is wrapped correctly.
 func TestShrinkFilesystem(t *testing.T) {
-	t.Run("error", func(t *testing.T) {
+	t.Run("nonexistent", func(t *testing.T) {
 		orig := execResize2fs
 		defer func() { execResize2fs = orig }()
-		execResize2fs = func(_ string, _, _ int64) error {
+		execResize2fs = func(_ string, _ int64) error {
 			return fmt.Errorf("resize failure")
 		}
 
@@ -42,20 +43,48 @@ func TestShrinkFilesystem(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
-		if !strings.Contains(err.Error(), "failed to run resize2fs") {
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		tmpFile := filepath.Join(tmpDir, "disk.img")
+		if err := testCopyFile(imgFile, tmpFile); err != nil {
+			t.Fatalf("failed to copy disk image: %v", err)
+		}
+		orig := execResize2fs
+		defer func() { execResize2fs = orig }()
+		resizeErr := fmt.Errorf("resize failure")
+		execResize2fs = func(_ string, _ int64) error {
+			return resizeErr
+		}
+
+		data := partitionData{name: "pY", number: 1, size: 5 * 1024 * 1024}
+		totalGrow := int64(1 * 1024 * 1024)
+		err := shrinkFilesystem(tmpFile, data, totalGrow)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, resizeErr) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
 	t.Run("success", func(t *testing.T) {
-		var calledDevice string
-		var calledMB int64
-		var calledStart int64
+		tmpDir := t.TempDir()
+		tmpFile := filepath.Join(tmpDir, "disk.img")
+		if err := testCopyFile(imgFile, tmpFile); err != nil {
+			t.Fatalf("failed to copy disk image: %v", err)
+		}
+		var (
+			calledDevice string
+			calledMB     int64
+		)
 		orig := execResize2fs
 		defer func() { execResize2fs = orig }()
-		execResize2fs = func(dev string, start int64, mb int64) error {
+		execResize2fs = func(dev string, mb int64) error {
 			calledDevice = dev
 			calledMB = mb
-			calledStart = start
 			return nil
 		}
 
@@ -66,20 +95,17 @@ func TestShrinkFilesystem(t *testing.T) {
 			start:  2048,
 		}
 		totalGrow := int64(2 * 1024 * 1024) // 2MB
-		if err := shrinkFilesystem(filepath.Join("/dev", data.name), data, totalGrow); err != nil {
+		if err := shrinkFilesystem(tmpFile, data, totalGrow); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		wantDevice := filepath.Join("/dev", data.name)
-		if calledDevice != wantDevice {
-			t.Errorf("device = %q, want %q", calledDevice, wantDevice)
+		calledDeviceName := filepath.Base(calledDevice)
+		if calledDeviceName != partTmpFilename {
+			t.Errorf("device = %q, want %q", calledDevice, partTmpFilename)
 		}
 		wantMB := (data.size - totalGrow) / (1024 * 1024)
 		if calledMB != wantMB {
 			t.Errorf("newSizeMB = %d, want %d", calledMB, wantMB)
-		}
-		if calledStart != data.start {
-			t.Errorf("start = %d, want %d", calledStart, data.start)
 		}
 	})
 }
