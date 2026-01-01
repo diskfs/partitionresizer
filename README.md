@@ -1,6 +1,10 @@
 # Partition Resizer
 
-This is a tool to resize GPT disk partitions.
+This is a tool to resize GPT disk partitions and their filesystems. It can grow multiple partitions,
+primarily by copying the partitions to new, larger partitions in available free space on the disk.
+
+If insufficient free space is available, and you give it an optional shrink partition that is ext4,
+it will shrink the ext4 filesystem and its partition to find space, if it can.
 
 It assumes the following:
 
@@ -12,35 +16,24 @@ It assumes the following:
 It does **not** require resizing of the ext4 partition, if there is sufficient
 available space on the disk to create newer, larger partitions.
 
-## Partition structure
+## Filesystems
 
-The new partition sizes are the following:
+It has the following handling for filesystems:
 
-* ESP - EFI System Partition, FAT32, grow to 2GB
-* IMGA - EVE Image Partition, squashfs, grow to 4GB
-* IMGB - EVE Image Partition, squashfs, grow to 4GB
-* PERSIST - User data, ext4, shrink to free up 10GB at the end of the disk, if necessary
+* Growing FAT32: create a new FAT32 filesystem on the new partition, copy contents.
+* Growing squashfs: copy partition contents using `dd`.
+* Shrinking ext4: use `resize2fs` to shrink the filesystem, then shrink the partition.
 
-If the disk containing the existing ESP/IMGA/IMGB partitions already has at least 10GB free at the end of the disk, then PERSIST filesystem is untouched. This is because of one of the following:
+## Dependencies
 
-* PERSIST filesystem is smaller than its partition (unlikely) such that partition has at least 10GB unallocated to the filesystem, in which case the partition is simply shrunk
-* unallocated space on the disk of at least 10GB, either because there is unpartitioned space of at least 10GB after the PERSIST partition, or because PERSIST is on another disk entirely, in which case no action affects PERSIST filesystem or partition at all
+The only external dependency is `resize2fs`, which is part of the `e2fsprogs-extras` package on Linux,
+and brew formula `e2fsprogs` on macOS.
 
-## Process
+If you do not need to resize an ext4 filesystem, you do not need to have this installed.
 
-The automated process is as follows:
+## Block devices
 
-1. Ensure PERSIST is offline; the other partitions do not need to be offline, although it is better.
-1. Determine the disk that contains ESP/IMGA/IMGB, henceforth "root disk".
-1. Determine if there is sufficient unpartitioned space at the end of the root disk; if so, skip the next step.
-1. Free up space:
-   1. Determine the location and size of PERSIST partition and filesystem.
-   1. Determine if PERSIST filesystem can be shrunk enough to free up space; if not, exit with error.
-   1. Shrink PERSIST filesystem.
-   1. Shrink PERSIST partition.
-1. Create new ESP, IMGA and IMGB partitions of the required sizes at the end of the root disk.
-1. Copy existing ESP, IMGA and IMGB partition contents to the new partitions.
-   * ESP: create new FAT32 filesystem on new ESP partition, copy contents.
-   * IMGA/IMGB: copy partition contents using `dd`.
-1. Update GPT partition table to mark new partitions, and unmark old partitions.
-1. Sync and exit.
+resizer works with both disk image files and block devices. When working with block devices,
+if it needs to resize an ext4 filesystem, it will copy the partition to a temporary file,
+shrink the temporary file's filesystem, then copy it back to the block device, and then shrink that
+partition.
