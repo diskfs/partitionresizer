@@ -25,19 +25,21 @@ var execResize2fs = func(partDevice string, newSizeMB int64) error {
 	return cmd.Run()
 }
 
-// shrinkFilesystem shrinks an ext4 filesystem, given a full path to the device and partition data
+// resizeFilesystem resizes an ext4 filesystem, given a full path to the device and partition data
 // Should account for it being a disk image with multiple partitions if needed, i.e. not just an entire disk,
-// using the information in shrinkData.
-func shrinkFilesystem(
+// using the information in filesystemData.
+// filesystemData is expected to be the *current* partition data, i.e. before resizing,
+// while delta is the expected delta in size.
+func resizeFilesystem(
 	device string,
-	shrinkData partitionData,
-	totalGrow int64,
+	filesystemData partitionData,
+	delta int64,
 ) error {
-	newSize := shrinkData.size - totalGrow
+	newSize := filesystemData.size + delta
 	newSizeMB := newSize / (1024 * 1024)
 	log.Printf(
-		"Resizing filesystem on partition %d to %d MB to make space for growing other partitions",
-		shrinkData.number, newSizeMB,
+		"Resizing filesystem on partition %d to %d MB",
+		filesystemData.number, newSizeMB,
 	)
 	f, err := os.Open(device)
 	if err != nil {
@@ -63,13 +65,13 @@ func shrinkFilesystem(
 			_ = os.RemoveAll(tmpDir)
 		}()
 		// copy the file over
-		if err := CopyRange(device, tmpFileName, shrinkData.start, 0, shrinkData.size, 0); err != nil {
+		if err := CopyRange(device, tmpFileName, filesystemData.start, 0, filesystemData.size, 0); err != nil {
 			return fmt.Errorf("copy to temp file: %w", err)
 		}
 		if err := execResize2fs(tmpFileName, newSizeMB); err != nil {
 			return err
 		}
-		err = CopyRange(tmpFileName, device, 0, shrinkData.start, shrinkData.size, 0)
+		err = CopyRange(tmpFileName, device, 0, filesystemData.start, newSize, 0)
 	case disk.DeviceTypeUnknown:
 		err = fmt.Errorf("unknown device type for %s", device)
 	}

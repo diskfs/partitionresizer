@@ -39,7 +39,7 @@ func TestShrinkFilesystem(t *testing.T) {
 
 		data := partitionData{name: "pY", number: 1, size: 5 * 1024 * 1024}
 		totalGrow := int64(1 * 1024 * 1024)
-		err := shrinkFilesystem(filepath.Join("/dev", data.name), data, totalGrow)
+		err := resizeFilesystem(filepath.Join("/dev", data.name), data, -1*totalGrow)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -62,7 +62,7 @@ func TestShrinkFilesystem(t *testing.T) {
 
 		data := partitionData{name: "pY", number: 1, size: 5 * 1024 * 1024}
 		totalGrow := int64(1 * 1024 * 1024)
-		err := shrinkFilesystem(tmpFile, data, totalGrow)
+		err := resizeFilesystem(tmpFile, data, -1*totalGrow)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -95,7 +95,7 @@ func TestShrinkFilesystem(t *testing.T) {
 			start:  2048,
 		}
 		totalGrow := int64(2 * 1024 * 1024) // 2MB
-		if err := shrinkFilesystem(tmpFile, data, totalGrow); err != nil {
+		if err := resizeFilesystem(tmpFile, data, -1*totalGrow); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 

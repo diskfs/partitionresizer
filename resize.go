@@ -168,10 +168,10 @@ func removePartitions(d *disk.Disk, partitions []int) error {
 func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 	for _, r := range resizes {
 		if r.original.size <= r.target.size {
-			log.Printf("partition %d does not require shrinking, skipping", r.original.number)
+			log.Printf("filesystem on partition %d does not require shrinking, skipping", r.original.number)
 			continue
 		}
-		log.Printf("shrinking filesystem %d %s from %d to %d bytes", r.original.number, r.original.label, r.original.size, r.target.size)
+		log.Printf("shrinking filesystem on partition %d label '%s' from %d to %d bytes / %d to %d MB", r.original.number, r.original.label, r.original.size, r.target.size, r.original.size/MB, r.target.size/MB)
 		// verify ext4 fs on shrink partition
 		fs, err := d.GetFilesystem(r.original.number)
 		if err != nil {
@@ -186,7 +186,8 @@ func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 		if p == "" {
 			return fmt.Errorf("cannot shrink filesystem: disk backend has no path")
 		}
-		if err := shrinkFilesystem(p, r.target, r.original.size-r.target.size); err != nil {
+		delta := r.target.size - r.original.size
+		if err := resizeFilesystem(p, r.original, delta); err != nil {
 			return err
 		}
 	}
@@ -206,7 +207,10 @@ func shrinkPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 		}
 		log.Printf("Resizing partition %d to %d bytes", r.original.number, r.target.size)
 		// Update GPT entry for the shrink partition (indexed by number-1)
+		// set the new desired size
 		table.Partitions[r.original.number-1].Size = uint64(r.target.size)
+		// set the end to 0, so that it will be recalculated
+		table.Partitions[r.original.number-1].End = 0
 		resizeCount++
 	}
 	if resizeCount == 0 {
