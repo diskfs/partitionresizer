@@ -58,9 +58,26 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 		return fmt.Errorf("unsupported partition table type, only GPT is supported")
 	}
 	partitions := table.Partitions
+	// the logic here is as follows.
+	// 1- Go through each existing partition
+	// 2- If it is being grown/moved, create a new partition entry with the new start/size, add it to the table instead of the existing one
+	// 3- If it is being shrunk/unchanged, just copy the existing partition entry to the new table
+	// The key is to be sure we do something with every single existing partition, so we do not lose any in the new table
+	indexMap := map[int]partitionResizeTarget{}
 	for _, r := range resizes {
-		if r.original.size == r.target.size && r.original.start == r.target.start {
+		indexMap[r.original.number] = r
+	}
+	for _, p := range table.Partitions {
+		r, ok := indexMap[int(p.Index)]
+		if !ok {
+			// not being resized, just copy over
+			partitions = append(partitions, p)
+			continue
+		}
+		// no change in start, just copy over, it already was handled
+		if r.original.start == r.target.start {
 			log.Printf("skipping creation of partition %s, no size or location change", r.original.label)
+			partitions = append(partitions, p)
 			continue
 		}
 		log.Printf("resizing partition %s: original %+v, target %+v", r.original.label, r.original, r.target)
@@ -74,6 +91,7 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 			Name:       orig.Name,
 			GUID:       orig.GUID,
 			Attributes: orig.Attributes,
+			Index:      r.target.number,
 		}
 		partitions = append(partitions, &newPart)
 	}
