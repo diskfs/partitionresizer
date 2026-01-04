@@ -57,7 +57,7 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	if !ok {
 		return fmt.Errorf("unsupported partition table type, only GPT is supported")
 	}
-	partitions := table.Partitions
+	var partitions []*gpt.Partition
 	// the logic here is as follows.
 	// 1- Go through each existing partition
 	// 2- If it is being grown/moved, create a new partition entry with the new start/size, add it to the table instead of the existing one
@@ -82,15 +82,14 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 		}
 		log.Printf("resizing partition %s: original %+v, target %+v", r.original.label, r.original, r.target)
 		// get existing partition info
-		orig := partitions[r.original.number-1]
 		// create the new partition
 		newPart := gpt.Partition{
 			Start:      uint64(r.target.start / int64(table.LogicalSectorSize)),
 			Size:       uint64(r.target.size),
-			Type:       orig.Type,
-			Name:       orig.Name,
-			GUID:       orig.GUID,
-			Attributes: orig.Attributes,
+			Type:       p.Type,
+			Name:       p.Name,
+			GUID:       p.GUID,
+			Attributes: p.Attributes,
 			Index:      r.target.number,
 		}
 		partitions = append(partitions, &newPart)
