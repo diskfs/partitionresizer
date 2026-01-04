@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	resizer "github.com/deitch/partitionresizer"
+	resizer "github.com/diskfs/partitionresizer"
 	"github.com/spf13/cobra"
 )
 

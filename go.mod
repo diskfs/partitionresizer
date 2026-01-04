@@ -1,4 +1,4 @@
-module github.com/deitch/partitionresizer
+module github.com/diskfs/partitionresizer
 
 go 1.24.2
 

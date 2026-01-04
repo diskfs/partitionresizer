@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	resizer "github.com/deitch/partitionresizer"
+	resizer "github.com/diskfs/partitionresizer"
 )
 
 // Valid partition identifier formats
