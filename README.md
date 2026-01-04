@@ -26,7 +26,7 @@ It has the following handling for filesystems:
 
 ## Dependencies
 
-The only external dependency is `resize2fs`, which is part of the `e2fsprogs-extras` package on Linux,
+The only external dependency is the ext4 utils `resize2fs` and `e2fsck`, which are part of the `e2fsprogs-extras` package on Linux,
 and brew formula `e2fsprogs` on macOS.
 
 If you do not need to resize an ext4 filesystem, you do not need to have this installed.

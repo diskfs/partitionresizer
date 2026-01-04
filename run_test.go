@@ -54,7 +54,7 @@ func TestRun(t *testing.T) {
 		NewPartitionChange(IdentifierByLabel, "partb", 2*GB),
 		NewPartitionChange(IdentifierByLabel, "ESP", 1*GB),
 	}
-	if err := Run(tmpFile, &shrink, growList, false); err != nil {
+	if err := Run(tmpFile, &shrink, growList, false, false); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 

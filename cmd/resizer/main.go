@@ -14,6 +14,7 @@ var rootCmd = func() *cobra.Command {
 	var (
 		shrinkPartition string
 		growPartitions  []string
+		fixErrors       bool
 		dryRun          bool
 	)
 	cmd := &cobra.Command{
@@ -70,7 +71,7 @@ var rootCmd = func() *cobra.Command {
 			if len(args) > 0 {
 				disk = args[0]
 			}
-			if err := resizer.Run(disk, &shrinkPartitionParsed, growPartitionsParsed, dryRun); err != nil {
+			if err := resizer.Run(disk, &shrinkPartitionParsed, growPartitionsParsed, fixErrors, dryRun); err != nil {
 				log.Fatalf("Resize operation failed: %v", err)
 			}
 		},
@@ -78,6 +79,7 @@ var rootCmd = func() *cobra.Command {
 	cmd.Flags().StringVar(&shrinkPartition, "shrink-partition", "", "Partition to shrink to make space, if necessary")
 	cmd.Flags().StringSliceVar(&growPartitions, "grow-partition", []string{}, "Partitions to grow, along with their desired sizes, in format identifier:partition:size, see help (e.g. name:sda1:20G or label:EFI System:100M)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "If set, will only simulate the resize operations without making any changes")
+	cmd.Flags().BoolVar(&fixErrors, "fix-errors", false, "If set, will attempt to fix any ext4 filesystem errors found during fsck before shrinking")
 	return cmd
 }
 

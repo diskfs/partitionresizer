@@ -18,9 +18,9 @@ type copyData struct {
 }
 
 // resize performs the actual resize operations on the given disk
-func resize(d *disk.Disk, resizes []partitionResizeTarget) error {
+func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error {
 	// do any shrinks first
-	if err := shrinkFilesystems(d, resizes); err != nil {
+	if err := shrinkFilesystems(d, resizes, fixErrors); err != nil {
 		return err
 	}
 	if err := shrinkPartitions(d, resizes); err != nil {
@@ -165,7 +165,7 @@ func removePartitions(d *disk.Disk, partitions []int) error {
 	return nil
 }
 
-func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
+func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error {
 	for _, r := range resizes {
 		if r.original.size <= r.target.size {
 			log.Printf("filesystem on partition %d does not require shrinking, skipping", r.original.number)
@@ -187,7 +187,7 @@ func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 			return fmt.Errorf("cannot shrink filesystem: disk backend has no path")
 		}
 		delta := r.target.size - r.original.size
-		if err := resizeFilesystem(p, r.original, delta); err != nil {
+		if err := resizeFilesystem(p, r.original, delta, fixErrors); err != nil {
 			return err
 		}
 	}

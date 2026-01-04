@@ -18,11 +18,25 @@ const (
 
 // execResize2fs is the function used to invoke resize2fs. partDevice may be a block device pointing to the actual
 // filesystem partition, or an image file with the filesystem at byte 0.
-var execResize2fs = func(partDevice string, newSizeMB int64) error {
-	cmd := exec.Command("resize2fs", partDevice, fmt.Sprintf("%dM", newSizeMB))
+var execResize2fs = func(partDevice string, newSizeMB int64, fixErrors bool) error {
+	fixFlag := "-n"
+	if fixErrors {
+		fixFlag = "-y"
+	}
+	cmd := exec.Command("e2fsck", "-f", fixFlag, partDevice)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("e2fsck failed: %w", err)
+	}
+
+	cmd = exec.Command("resize2fs", partDevice, fmt.Sprintf("%dM", newSizeMB))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("resize2fs failed: %w", err)
+	}
+	return nil
 }
 
 // resizeFilesystem resizes an ext4 filesystem, given a full path to the device and partition data
@@ -34,6 +48,7 @@ func resizeFilesystem(
 	device string,
 	filesystemData partitionData,
 	delta int64,
+	fixErrors bool,
 ) error {
 	newSize := filesystemData.size + delta
 	newSizeMB := newSize / (1024 * 1024)
@@ -51,7 +66,7 @@ func resizeFilesystem(
 	}
 	switch deviceType {
 	case disk.DeviceTypeBlockDevice:
-		return execResize2fs(device, newSizeMB)
+		return execResize2fs(device, newSizeMB, fixErrors)
 	case disk.DeviceTypeFile:
 		// copy the partition, then resize it, then copy it back into the original disk image
 		tmpDir := os.TempDir()
@@ -68,7 +83,7 @@ func resizeFilesystem(
 		if err := CopyRange(device, tmpFileName, filesystemData.start, 0, filesystemData.size, 0); err != nil {
 			return fmt.Errorf("copy to temp file: %w", err)
 		}
-		if err := execResize2fs(tmpFileName, newSizeMB); err != nil {
+		if err := execResize2fs(tmpFileName, newSizeMB, fixErrors); err != nil {
 			return err
 		}
 		err = CopyRange(tmpFileName, device, 0, filesystemData.start, newSize, 0)
