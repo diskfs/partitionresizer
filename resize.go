@@ -68,7 +68,7 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 		orig := partitions[r.original.number-1]
 		// create the new partition
 		newPart := gpt.Partition{
-			Start:      uint64(r.target.start),
+			Start:      uint64(r.target.start / int64(table.LogicalSectorSize)),
 			Size:       uint64(r.target.size),
 			Type:       orig.Type,
 			Name:       orig.Name,
