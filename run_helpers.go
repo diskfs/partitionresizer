@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/partition/gpt"
@@ -60,6 +59,7 @@ func resizeFilesystem(
 	if err != nil {
 		return err
 	}
+	defer func() { _ = f.Close() }()
 	deviceType, err := disk.DetermineDeviceType(f)
 	if err != nil {
 		return err
@@ -69,24 +69,22 @@ func resizeFilesystem(
 		return execResize2fs(device, newSizeMB, fixErrors)
 	case disk.DeviceTypeFile:
 		// copy the partition, then resize it, then copy it back into the original disk image
-		tmpDir := os.TempDir()
-		tmpFileName := filepath.Join(tmpDir, partTmpFilename)
-		f, err := os.Create(tmpFileName)
+		tmpFile, err := os.CreateTemp("", "partresizer-shrinkfs-")
 		if err != nil {
 			return err
 		}
+		_ = tmpFile.Close()
 		defer func() {
-			_ = f.Close()
-			_ = os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpFile.Name())
 		}()
 		// copy the file over
-		if err := CopyRange(device, tmpFileName, filesystemData.start, 0, filesystemData.size, 0); err != nil {
+		if err := CopyRange(device, tmpFile.Name(), filesystemData.start, 0, filesystemData.size, 0); err != nil {
 			return fmt.Errorf("copy to temp file: %w", err)
 		}
-		if err := execResize2fs(tmpFileName, newSizeMB, fixErrors); err != nil {
+		if err := execResize2fs(tmpFile.Name(), newSizeMB, fixErrors); err != nil {
 			return err
 		}
-		err = CopyRange(tmpFileName, device, 0, filesystemData.start, newSize, 0)
+		err = CopyRange(tmpFile.Name(), device, 0, filesystemData.start, newSize, 0)
 	case disk.DeviceTypeUnknown:
 		err = fmt.Errorf("unknown device type for %s", device)
 	}
