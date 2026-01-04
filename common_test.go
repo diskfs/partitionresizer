@@ -13,13 +13,23 @@ const imgFile = "testdata/dist/disk.img"
 // TestMain sets up the test environment and runs the tests
 func TestMain(m *testing.M) {
 	// Check and generate artifacts if necessary
-	needGen := false
 	if _, err := os.Stat(imgFile); os.IsNotExist(err) {
-		needGen = true
-	}
-	if needGen {
 		// Run the buildimg.sh script
 		cmd := exec.Command("sh", "buildimg.sh")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Dir = "testdata"
+
+		// Execute the command
+		if err := cmd.Run(); err != nil {
+			println("error generating test artifacts for ext4", err)
+			os.Exit(1)
+		}
+	}
+
+	if _, err := os.Stat(diskfullImg); os.IsNotExist(err) {
+		// Run the buildimg.sh script
+		cmd := exec.Command("sh", "buildimgfull.sh")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Dir = "testdata"
