@@ -25,5 +25,7 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
             version: v2.6
+      - name: Create test tmp dir
+        run: sudo mkdir /mnt/tmp && sudo chmod 1777 /mnt/tmp
       - name: test
-        run: go test ./...
+        run: TMPDIR=/mnt/tmp go test ./...
