@@ -69,7 +69,7 @@ func resizeFilesystem(
 		return execResize2fs(device, newSizeMB, fixErrors)
 	case disk.DeviceTypeFile:
 		// copy the partition, then resize it, then copy it back into the original disk image
-		tmpFile, err2 := os.CreateTemp("", "partresizer-shrinkfs-")
+		tmpFile, err2 := os.CreateTemp("", partTmpFilename)
 		if err2 != nil {
 			return err2
 		}

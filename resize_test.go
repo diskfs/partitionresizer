@@ -37,6 +37,7 @@ func TestCreatePartitions(t *testing.T) {
 	table := &gpt.Table{
 		Partitions: []*gpt.Partition{
 			{
+				Index:      1,
 				Start:      offset,
 				Size:       36 * MB,
 				Type:       gpt.LinuxFilesystem,
@@ -44,6 +45,7 @@ func TestCreatePartitions(t *testing.T) {
 				Attributes: 0,
 			},
 			{
+				Index:      2,
 				Start:      offset + 36*MB,
 				Size:       200 * MB,
 				Type:       gpt.LinuxFilesystem,
@@ -103,12 +105,21 @@ func TestCreatePartitions(t *testing.T) {
 	if len(newTable.Partitions) != expectedCount {
 		t.Fatalf("expected %d partitions after resize, got %d", expectedCount, len(newTable.Partitions))
 	}
-	for i, r := range resizes {
-		newPart := newTable.Partitions[i+2] // new partitions are at the end
-		if int64(newPart.Start) != r.target.start {
-			t.Errorf("partition %d start mismatch: expected %d, got %d", r.target.number, r.target.start, newPart.Start)
+	sectorSize := newTable.LogicalSectorSize
+	for _, r := range resizes {
+		newPartRaw, err := d.GetPartition(r.target.number)
+		if err != nil {
+			t.Fatalf("failed to get new partition %d: %v", r.target.number, err)
 		}
-		if int64(newPart.Size) != r.target.size {
+		newPart, ok := newPartRaw.(*gpt.Partition)
+		if !ok {
+			t.Fatalf("unsupported partition table type, only GPT is supported")
+		}
+		newPartStart := int64(newPart.Start) * int64(sectorSize)
+		if newPartStart != r.target.start {
+			t.Errorf("partition %d start mismatch: expected %d, got %d", r.target.number, r.target.start, newPartStart)
+		}
+		if newPart.Size != uint64(r.target.size) {
 			t.Errorf("partition %d size mismatch: expected %d, got %d", r.target.number, r.target.size, newPart.Size)
 		}
 		if newPart.Name != r.original.label {
@@ -289,6 +300,7 @@ func TestCopyFilesystems(t *testing.T) {
 		Type:       table.Partitions[0].Type,
 		Name:       table.Partitions[0].Name,
 		Attributes: table.Partitions[0].Attributes,
+		Index:      len(table.Partitions) + 1,
 	})
 	if err := d.Partition(table); err != nil {
 		t.Fatalf("failed to write updated partition table: %v", err)

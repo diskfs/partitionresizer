@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/diskfs/go-diskfs/disk"
@@ -100,7 +101,7 @@ func TestShrinkFilesystem(t *testing.T) {
 		}
 
 		calledDeviceName := filepath.Base(calledDevice)
-		if calledDeviceName != partTmpFilename {
+		if !strings.HasPrefix(calledDeviceName, partTmpFilename) {
 			t.Errorf("device = %q, want %q", calledDevice, partTmpFilename)
 		}
 		wantMB := (data.size - totalGrow) / (1024 * 1024)
