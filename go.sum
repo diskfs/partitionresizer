@@ -5,6 +5,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/diskfs/go-diskfs v1.7.1-0.20260105085030-e1de3d7b9b8d h1:B3Rl1zHQexA0u0E8Goe1RknvXJY0HGfhaUk8QwbXY7I=
 github.com/diskfs/go-diskfs v1.7.1-0.20260105085030-e1de3d7b9b8d/go.mod h1:ibl8iCvd1jIwzjsJZeXCePphgRUjNCnXyCInEHy0kE4=
+github.com/diskfs/go-diskfs v1.7.1-0.20260105105035-8556bfdb278d h1:6TpzECri9N/Ct0ZdXJgH9hDVTaZWZCNQg1QBuT1ujNo=
+github.com/diskfs/go-diskfs v1.7.1-0.20260105105035-8556bfdb278d/go.mod h1:ibl8iCvd1jIwzjsJZeXCePphgRUjNCnXyCInEHy0kE4=
 github.com/djherbis/times v1.6.0 h1:w2ctJ92J8fBvWPxugmXIv7Nz7Q3iDMKNx9v5ocVH20c=
 github.com/djherbis/times v1.6.0/go.mod h1:gOHeRAz2h+VJNZ5Gmc/o7iD9k4wW7NMVqieYCY99oc0=
 github.com/elliotwutingfeng/asciiset v0.0.0-20251209210403-59ed57bd7b86 h1:4eMYSciH1O/s15ZkFgp3Wbj05pVu4vs9SWPi8CVjVcw=
