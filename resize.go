@@ -47,6 +47,8 @@ func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error
 	return nil
 }
 
+// createPartitions creates new partitions as per the resize targets, taking
+// all of the characteristics from the original partitions except for start/end/size.
 func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	// first create the new partitions in the partition table and write it
 	tableRaw, err := d.GetPartitionTable()
@@ -57,31 +59,23 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	if !ok {
 		return fmt.Errorf("unsupported partition table type, only GPT is supported")
 	}
-	var partitions []*gpt.Partition
-	// the logic here is as follows.
-	// 1- Go through each existing partition
-	// 2- If it is being grown/moved, create a new partition entry with the new start/size, add it to the table instead of the existing one
-	// 3- If it is being shrunk/unchanged, just copy the existing partition entry to the new table
-	// The key is to be sure we do something with every single existing partition, so we do not lose any in the new table
-	indexMap := map[int]partitionResizeTarget{}
-	for _, r := range resizes {
-		indexMap[r.original.number] = r
+	partitions := table.Partitions
+	indexMap := map[int]*gpt.Partition{}
+	for _, p := range partitions {
+		indexMap[p.Index] = p
 	}
-	for _, p := range table.Partitions {
-		r, ok := indexMap[int(p.Index)]
-		if !ok {
-			// not being resized, just copy over
-			partitions = append(partitions, p)
-			continue
-		}
+	for _, r := range resizes {
 		// no change in start, just copy over, it already was handled
 		if r.original.start == r.target.start {
-			log.Printf("skipping creation of partition %s, no size or location change", r.original.label)
-			partitions = append(partitions, p)
+			log.Printf("partition %d %s: no location change, no need to create additional partition", r.original.number, r.original.label)
 			continue
 		}
-		log.Printf("resizing partition %s: original %+v, target %+v", r.original.label, r.original, r.target)
+		log.Printf("creating new partition %s: original %+v, target %+v", r.original.label, r.original, r.target)
 		// get existing partition info
+		p, ok := indexMap[r.original.number]
+		if !ok {
+			return fmt.Errorf("original partition %d not found in partition table", r.original.number)
+		}
 		// create the new partition
 		newPart := gpt.Partition{
 			Start:      uint64(r.target.start / int64(table.LogicalSectorSize)),
@@ -94,7 +88,7 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 		}
 		partitions = append(partitions, &newPart)
 	}
-	// write the updated partition table
+	// write the updated partition table; we rely on the GPT implementation to sort out the ordering
 	table.Partitions = partitions
 	if err := d.Partition(table); err != nil {
 		return fmt.Errorf("failed to write updated partition table: %v", err)

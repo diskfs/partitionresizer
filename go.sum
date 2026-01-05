@@ -3,12 +3,8 @@ github.com/anchore/go-lzo v0.1.0/go.mod h1:3kLx0bve2oN1iDwgM1U5zGku1Tfbdb0No5qp1
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/diskfs/go-diskfs v1.7.1-0.20251229131233-69d81d3afc36 h1:NBsBpHcOTp143lWzNMgcnsTxThTMyRFibuCckp7VaxQ=
-github.com/diskfs/go-diskfs v1.7.1-0.20251229131233-69d81d3afc36/go.mod h1:ibl8iCvd1jIwzjsJZeXCePphgRUjNCnXyCInEHy0kE4=
-github.com/diskfs/go-diskfs v1.7.1-0.20260101125730-1abc0d0023ac h1:2OQLVByOFY4gKlpqVvWKu3aPVzHIYYUBboHMTODcRL0=
-github.com/diskfs/go-diskfs v1.7.1-0.20260101125730-1abc0d0023ac/go.mod h1:ibl8iCvd1jIwzjsJZeXCePphgRUjNCnXyCInEHy0kE4=
-github.com/diskfs/go-diskfs v1.7.1-0.20260101163658-1d808340cf20 h1:LXL5tkAm4NpKDDvpwtAGI3LOy/qG2yp6MO4ETFjgCcc=
-github.com/diskfs/go-diskfs v1.7.1-0.20260101163658-1d808340cf20/go.mod h1:ibl8iCvd1jIwzjsJZeXCePphgRUjNCnXyCInEHy0kE4=
+github.com/diskfs/go-diskfs v1.7.1-0.20260105085030-e1de3d7b9b8d h1:B3Rl1zHQexA0u0E8Goe1RknvXJY0HGfhaUk8QwbXY7I=
+github.com/diskfs/go-diskfs v1.7.1-0.20260105085030-e1de3d7b9b8d/go.mod h1:ibl8iCvd1jIwzjsJZeXCePphgRUjNCnXyCInEHy0kE4=
 github.com/djherbis/times v1.6.0 h1:w2ctJ92J8fBvWPxugmXIv7Nz7Q3iDMKNx9v5ocVH20c=
 github.com/djherbis/times v1.6.0/go.mod h1:gOHeRAz2h+VJNZ5Gmc/o7iD9k4wW7NMVqieYCY99oc0=
 github.com/elliotwutingfeng/asciiset v0.0.0-20251209210403-59ed57bd7b86 h1:4eMYSciH1O/s15ZkFgp3Wbj05pVu4vs9SWPi8CVjVcw=
