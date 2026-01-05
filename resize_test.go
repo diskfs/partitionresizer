@@ -138,6 +138,7 @@ func TestRemovePartitions(t *testing.T) {
 	table := &gpt.Table{
 		Partitions: []*gpt.Partition{
 			{
+				Index:      1,
 				Start:      offset,
 				Size:       36 * MB,
 				Type:       gpt.LinuxFilesystem,
@@ -145,6 +146,7 @@ func TestRemovePartitions(t *testing.T) {
 				Attributes: 0,
 			},
 			{
+				Index:      2,
 				Start:      offset + 36*MB,
 				Size:       200 * MB,
 				Type:       gpt.LinuxFilesystem,
@@ -152,6 +154,7 @@ func TestRemovePartitions(t *testing.T) {
 				Attributes: 0,
 			},
 			{
+				Index:      3,
 				Start:      offset + 36*MB + 200*MB,
 				Size:       100 * MB,
 				Type:       gpt.LinuxFilesystem,
@@ -159,6 +162,7 @@ func TestRemovePartitions(t *testing.T) {
 				Attributes: 0,
 			},
 			{
+				Index:      4,
 				Start:      offset + 36*MB + 200*MB + 100*MB,
 				Size:       100 * MB,
 				Type:       gpt.LinuxFilesystem,
@@ -171,10 +175,39 @@ func TestRemovePartitions(t *testing.T) {
 		t.Fatalf("failed to write partition table: %v", err)
 	}
 	// define resize targets
-	toRemove := []int{2, 3}
+	resizes := []partitionResizeTarget{
+		{
+			original: partitionData{
+				number: 2,
+				start:  int64(offset + 36*MB),
+				size:   int64(table.Partitions[1].Size),
+				label:  table.Partitions[1].Name,
+			},
+			target: partitionData{
+				number: 5,
+				start:  0,
+				size:   0,
+				label:  "",
+			},
+		},
+		{
+			original: partitionData{
+				number: 3,
+				start:  int64(offset + 36*MB + 200*MB),
+				size:   int64(table.Partitions[2].Size),
+				label:  table.Partitions[2].Name,
+			},
+			target: partitionData{
+				number: 6,
+				start:  0,
+				size:   0,
+				label:  "",
+			},
+		},
+	}
 
 	// call removePartitions
-	if err := removePartitions(d, toRemove); err != nil {
+	if err := removePartitions(d, resizes); err != nil {
 		t.Fatalf("removePartitions failed: %v", err)
 	}
 	// verify partitions removed
@@ -186,7 +219,7 @@ func TestRemovePartitions(t *testing.T) {
 	if !ok {
 		t.Fatalf("unsupported partition table type, only GPT is supported")
 	}
-	expectedCount := len(table.Partitions) - len(toRemove)
+	expectedCount := len(table.Partitions) - len(resizes)
 	if len(newTable.Partitions) != expectedCount {
 		t.Fatalf("expected %d partitions after resize, got %d", expectedCount, len(newTable.Partitions))
 	}

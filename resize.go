@@ -36,11 +36,7 @@ func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error
 		return err
 	}
 
-	var oldPartitions []int
-	for _, r := range resizes {
-		oldPartitions = append(oldPartitions, r.original.number)
-	}
-	if err := removePartitions(d, oldPartitions); err != nil {
+	if err := removePartitions(d, resizes); err != nil {
 		return err
 	}
 
@@ -158,7 +154,7 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 	return nil
 }
 
-func removePartitions(d *disk.Disk, partitions []int) error {
+func removePartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	// first create the new partitions in the partition table and write it
 	tableRaw, err := d.GetPartitionTable()
 	if err != nil {
@@ -168,10 +164,22 @@ func removePartitions(d *disk.Disk, partitions []int) error {
 	if !ok {
 		return fmt.Errorf("unsupported partition table type, only GPT is supported")
 	}
-	for _, partitionNumber := range partitions {
-		log.Printf("removing old partition %d", partitionNumber)
-		// get existing partition info
-		table.Partitions[partitionNumber-1].Type = gpt.Unused
+	toRemove := make(map[int]bool)
+	for _, r := range resizes {
+		if r.original.number == r.target.number {
+			log.Printf("partition %d %s: no change in partition number, no need to remove old partition", r.original.number, r.original.label)
+			continue
+		}
+		log.Printf("removing old partition %d", r.original.number)
+		// mark this partition for removal
+		toRemove[r.original.number] = true
+	}
+	// remove any marked for removal
+	for _, p := range table.Partitions {
+		if toRemove[p.Index] {
+			log.Printf("removing partition %d from partition table", p.Index)
+			p.Type = gpt.Unused
+		}
 	}
 	// write the updated partition table
 	if err := d.Partition(table); err != nil {
