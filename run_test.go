@@ -26,7 +26,7 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open disk image: %v", err)
 	}
-	defer f0.Close()
+	defer func() { _ = f0.Close() }()
 	backend0 := file.New(f0, false)
 	d0, err := diskfs.OpenBackend(backend0, diskfs.WithOpenMode(diskfs.ReadWrite))
 	if err != nil {
@@ -62,7 +62,7 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open disk image after Run: %v", err)
 	}
-	defer f1.Close()
+	defer func() { _ = f1.Close() }()
 	backend1 := file.New(f1, true)
 	d1, err := diskfs.OpenBackend(backend1)
 	if err != nil {

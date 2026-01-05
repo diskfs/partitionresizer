@@ -193,7 +193,7 @@ func TestCalculateResizes(t *testing.T) {
 				size: targetSize,
 			},
 		}
-		resizes, err := calculateResizes(d.Size, parts, []partitionResizeTarget{prt})
+		_, err := calculateResizes(d.Size, parts, []partitionResizeTarget{prt})
 		if err == nil {
 			t.Fatal("expected insufficient space error, got nil")
 		}
@@ -215,7 +215,7 @@ func TestCalculateResizes(t *testing.T) {
 				size: lastPartSize / 2,
 			},
 		}
-		resizes, err = calculateResizes(d.Size, parts, []partitionResizeTarget{shrinkPart, prt})
+		resizes, err := calculateResizes(d.Size, parts, []partitionResizeTarget{shrinkPart, prt})
 		if err != nil {
 			t.Fatalf("calculateResizes with shrinking failed: %v", err)
 		}

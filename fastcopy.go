@@ -19,7 +19,7 @@ func CopyRange(srcPath, dstPath string, srcOffset, dstOffset, length int64, bufs
 	if err != nil {
 		return fmt.Errorf("open src: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	dstFlags := os.O_CREATE | os.O_RDWR
 
@@ -27,7 +27,7 @@ func CopyRange(srcPath, dstPath string, srcOffset, dstOffset, length int64, bufs
 	if err != nil {
 		return fmt.Errorf("open dst: %w", err)
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	if dstOffset < 0 {
 		if err := dst.Truncate(0); err != nil {
