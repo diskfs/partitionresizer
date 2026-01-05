@@ -101,6 +101,10 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 	// - squashfs, ext4, unknown: raw data copy
 	// - fat32: use filesystem copy
 	for _, r := range resizes {
+		if r.original.start == r.target.start {
+			log.Printf("partition %d %s: no location change, no need to copy filesystem", r.original.number, r.original.label)
+			continue
+		}
 		log.Printf("copying data from original partition %d to new partition %d", r.original.number, r.target.number)
 		fs, err := d.GetFilesystem(r.original.number)
 		switch {
