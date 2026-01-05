@@ -7,36 +7,9 @@ on:
       - main
 
 jobs:
-  report:
-    name: Report
-    runs-on: ubuntu-latest
-    steps:
-      - name: ref
-        run: echo ${{ github.ref }}
-      - name: event_name
-        run: echo ${{ github.event_name }}
   build:
     name: Build
-    strategy:
-      matrix:
-        target: [
-          {arch: amd64, os: linux},   {arch: arm64, os: linux},
-          {arch: amd64, os: windows}, {arch: arm64, os: windows},
-          {arch: amd64, os: darwin},  {arch: arm64, os: darwin},
-        ]
-    runs-on: ubuntu-latest
-    steps:
-      - name: checkout
-        uses: actions/checkout@v2
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-      - run: |
-            mkdir -p dist
-            go build -o dist/partitionresizer-${{ matrix.target.os }}-${{ matrix.target.arch }} ./cmd/partitionresizer
-        env:
-          GOOS: ${{ matrix.target.os }}
-          GOARCH: ${{ matrix.target.arch }}
+    uses: ./.github/workflows/build-reusable.yaml
   test:
     name: Test
     runs-on: ubuntu-latest

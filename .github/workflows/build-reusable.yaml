@@ -1,0 +1,64 @@
+name: Build
+
+on:
+  workflow_call:
+
+jobs:
+  report:
+    name: Report
+    runs-on: ubuntu-latest
+    steps:
+      - name: ref
+        run: echo ${{ github.ref }}
+      - name: event_name
+        run: echo ${{ github.event_name }}
+  build:
+    name: Build
+    strategy:
+      matrix:
+        target: [
+          {arch: amd64, os: linux},   {arch: arm64, os: linux},
+          {arch: amd64, os: windows}, {arch: arm64, os: windows},
+          {arch: amd64, os: darwin},  {arch: arm64, os: darwin},
+        ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: build
+        run: |
+          mkdir -p dist
+          go build -o dist/partitionresizer-${{ matrix.target.os }}-${{ matrix.target.arch }} ./cmd/resizer
+        env:
+          GOOS: ${{ matrix.target.os }}
+          GOARCH: ${{ matrix.target.arch }}
+      - name: upload per-target artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # unique per target within this run
+          name: dist-${{ matrix.target.os }}-${{ matrix.target.arch }}
+          path: dist/partitionresizer-${{ matrix.target.os }}-${{ matrix.target.arch }}
+          if-no-files-found: error
+
+  aggregate:
+    name: Aggregate build artifacts
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download per-target artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Upload aggregated dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # single, fixed-name artifact containing all binaries
+          name: dist
+          path: dist/
+          if-no-files-found: error
