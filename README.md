@@ -37,3 +37,18 @@ resizer works with both disk image files and block devices. When working with bl
 if it needs to resize an ext4 filesystem, it will copy the partition to a temporary file,
 shrink the temporary file's filesystem, then copy it back to the block device, and then shrink that
 partition.
+
+## Examples
+
+Shrink partition named sda3 (ext4) to make space, grow partition named sda1 to 20G, grow partition labeled "Data" to 100G on /dev/sda:
+
+```sh
+resizer --shrink-partition name:sda3 --grow-partition name:sda1:20G --grow-partition label:Data:100G /dev/sda
+```
+
+Grow partition named sda2 to 50G on disk image file disk.img:
+
+```sh
+resizer --grow-partition name:sda2:50G disk.img
+```
+
