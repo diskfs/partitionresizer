@@ -105,7 +105,10 @@ func TestRun(t *testing.T) {
 				t.Errorf("ESP partition size = %d, want %d", size, 1*GB)
 			}
 			fs, err := d1.GetFilesystem(int(p.Index))
-			if err != nil || fs.Type() != filesystem.TypeFat32 {
+			if err != nil {
+				t.Errorf("unexpected error when getting FAT 32 filesystem: %v", err)
+			}
+			if fs.Type() != filesystem.TypeFat32 {
 				t.Errorf("ESP filesystem type = %v, want FAT32", fs.Type())
 			}
 		default:
