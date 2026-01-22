@@ -4,15 +4,27 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"time"
 
 	"github.com/diskfs/go-diskfs/filesystem"
 )
+
+var excludedPaths = map[string]bool{
+	"lost+found":                true,
+	".DS_Store":                 true,
+	"System Volume Information": true,
+}
 
 func CopyFileSystem(src fs.FS, dst filesystem.FileSystem) error {
 	return fs.WalkDir(src, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// filter out special directories/files
+		if excludedPaths[d.Name()] {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if path == "." || path == "/" || path == "\\" {
 			return nil
@@ -21,6 +33,13 @@ func CopyFileSystem(src fs.FS, dst filesystem.FileSystem) error {
 		info, err := d.Info()
 		if err != nil {
 			return err
+		}
+
+		// symlinks, when they exist
+		if info.Mode()&os.ModeSymlink != 0 {
+			// Check if your destination interface supports symlinks
+			// Most custom 'filesystem.FileSystem' interfaces might not.
+			return handleSymlink(src, dst, path)
 		}
 
 		if d.IsDir() {
@@ -57,10 +76,23 @@ func copyOneFile(src fs.FS, dst filesystem.FileSystem, path string, info fs.File
 	}
 
 	// Restore timestamps *after* data is written (tar semantics)
+	atime := getAccessTime(info)
 	return dst.Chtimes(
 		path,
 		info.ModTime(), // creation time fallback if not available
-		time.Now(),     // access time: optional / policy choice
+		atime,          // access time: optional / policy choice
 		info.ModTime(),
 	)
+}
+
+func handleSymlink(src fs.FS, dst filesystem.FileSystem, path string) error {
+	// Note: src must support ReadLink. If src is an os.DirFS,
+	// you might need a type assertion or use os.Readlink directly.
+	linkTarget, err := os.Readlink(path)
+	if err != nil {
+		return nil // Or handle error
+	}
+
+	// This assumes your 'dst' interface has a Symlink method
+	return dst.Symlink(linkTarget, path)
 }

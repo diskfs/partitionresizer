@@ -20,22 +20,42 @@ type copyData struct {
 // resize performs the actual resize operations on the given disk
 func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error {
 	// do any shrinks first
+	// this is idempotent. If I have a 500MB partition with a 500MB filesystem,
+	// and shrink it to 400MB. If I stop, and then run it again, it will just say
+	// it already is 400MB and move on.
 	if err := shrinkFilesystems(d, resizes, fixErrors); err != nil {
 		return err
 	}
+	// next shrink partitions
+	// This is idempotent as well. I tell the GPT partition table what size
+	// I want, and it will just set it again if it's already that size.
 	if err := shrinkPartitions(d, resizes); err != nil {
 		return err
 	}
 
 	// next create new partitions
+	// It is important that they have different UUID, Type GUID, and predictable
+	// but different names, so that we can identify them later for copying data.
+	// Should it stop and then reboot, we want the original partitions to still be there.
+	// They should have their original UUID and Label, so there is no conflict.
+	// We also want the new partitions to have unique Type GUIDs and Names,
+	// in case something relies on that to boot. For example, EFI System Partition.
 	if err := createPartitions(d, resizes); err != nil {
 		return err
 	}
 
+	// next copy filesystems
+	// After the copy is done, verify the contents.
 	if err := copyFilesystems(d, resizes); err != nil {
 		return err
 	}
 
+	// swap the partitions
+	if err := swapPartitions(d, resizes); err != nil {
+		return err
+	}
+
+	// remove the old partitions
 	if err := removePartitions(d, resizes); err != nil {
 		return err
 	}
@@ -60,6 +80,10 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	for _, p := range partitions {
 		indexMap[p.Index] = p
 	}
+	labelMap := map[string]bool{}
+	for _, p := range partitions {
+		labelMap[p.Name] = true
+	}
 	for _, r := range resizes {
 		// no change in start, just copy over, it already was handled
 		if r.original.start == r.target.start {
@@ -72,15 +96,21 @@ func createPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 		if !ok {
 			return fmt.Errorf("original partition %d not found in partition table", r.original.number)
 		}
+		altName := getAlternateLabel(p.Name)
+		// see if it already exists
+		if labelMap[altName] {
+			log.Printf("alternate partition name %s already exists, assuming partition was already created", altName)
+			continue
+		}
 		// create the new partition
 		newPart := gpt.Partition{
 			Start:      uint64(r.target.start / int64(table.LogicalSectorSize)),
 			Size:       uint64(r.target.size),
-			Type:       p.Type,
-			Name:       p.Name,
-			GUID:       p.GUID,
+			Type:       gpt.LinuxFilesystem, // set to Linux Filesystem type to avoid conflicts
+			Name:       altName,
 			Attributes: p.Attributes,
 			Index:      r.target.number,
+			// explicitly leave GUID blank so it autogenerates a new one
 		}
 		partitions = append(partitions, &newPart)
 	}
@@ -106,7 +136,7 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 		switch {
 		case err != nil && !errors.Is(err, &disk.UnknownFilesystemError{}):
 			return fmt.Errorf("failed to get filesystem for partition %s: %v", r.original.label, err)
-		case err != nil || fs.Type() == filesystem.TypeSquashfs || fs.Type() == filesystem.TypeExt4:
+		case err != nil || fs.Type() == filesystem.TypeSquashfs:
 			// copy raw data using a pipe so reads feed writes concurrently
 			pr, pw := io.Pipe()
 			ch := make(chan copyData, 1)
@@ -131,6 +161,29 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 				return fmt.Errorf("mismatched read/write sizes for partition %s: read %d bytes, wrote %d bytes", r.original.label, readData.count, written)
 			}
 			log.Printf("partition %d -> %d: filesystem %v copied byte for byte, %d bytes copied", r.original.number, r.target.number, fs.Type(), written)
+			if err := verifyBlockCopy(d, r, readData.count); err != nil {
+				return fmt.Errorf("verification failed for partition %s: %v", r.original.label, err)
+			}
+			log.Printf("partition %d -> %d: filesystem %v copy verified", r.original.number, r.target.number, fs.Type())
+		case fs.Type() == filesystem.TypeExt4:
+			// create a new filesystem on the new partition
+			newFS, err := d.CreateFilesystem(disk.FilesystemSpec{
+				Partition:   r.target.number,
+				FSType:      filesystem.TypeExt4,
+				VolumeLabel: fs.Label(),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create ext4 filesystem for new partition %s: %v", r.original.label, err)
+			}
+			// use filesystem copy
+			if err := CopyFileSystem(fs, newFS); err != nil {
+				return fmt.Errorf("failed to copy ext4 filesystem data for partition %s: %v", r.original.label, err)
+			}
+			log.Printf("partition %d -> %d: filesystem %v copied file content", r.original.number, r.target.number, fs.Type())
+			if err := CompareFS(fs, newFS); err != nil {
+				return fmt.Errorf("verification failed for partition %s: %v", r.original.label, err)
+			}
+			log.Printf("partition %d -> %d: filesystem %v copy verified", r.original.number, r.target.number, fs.Type())
 		case fs.Type() == filesystem.TypeFat32:
 			// create a new filesystem on the new partition
 			newFS, err := d.CreateFilesystem(disk.FilesystemSpec{
@@ -146,6 +199,10 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 				return fmt.Errorf("failed to copy FAT32 filesystem data for partition %s: %v", r.original.label, err)
 			}
 			log.Printf("partition %d -> %d: filesystem %v copied file content", r.original.number, r.target.number, fs.Type())
+			if err := CompareFS(fs, newFS); err != nil {
+				return fmt.Errorf("verification failed for partition %s: %v", r.original.label, err)
+			}
+			log.Printf("partition %d -> %d: filesystem %v copy verified", r.original.number, r.target.number, fs.Type())
 		default:
 			return fmt.Errorf("unsupported filesystem type %v for partition %s", fs.Type(), r.original.label)
 		}
@@ -154,6 +211,7 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 	return nil
 }
 
+// remove partitions removes the original partitions after data has been copied
 func removePartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	// first create the new partitions in the partition table and write it
 	tableRaw, err := d.GetPartitionTable()
@@ -188,6 +246,50 @@ func removePartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	return nil
 }
 
+// swapPartitions swaps the labels, Type GUIDs, and UUIDs of the original and target partitions
+func swapPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
+	// first create the new partitions in the partition table and write it
+	tableRaw, err := d.GetPartitionTable()
+	if err != nil {
+		return err
+	}
+	table, ok := tableRaw.(*gpt.Table)
+	if !ok {
+		return fmt.Errorf("unsupported partition table type, only GPT is supported")
+	}
+	indexToPosition := make(map[int]int)
+	for i, p := range table.Partitions {
+		indexToPosition[p.Index] = i
+	}
+	for _, r := range resizes {
+		if r.original.number == r.target.number {
+			log.Printf("partition %d %s: no change in partition number, no need to swap partitions", r.original.number, r.original.label)
+			continue
+		}
+		log.Printf("swapping values on partitions original %d -> %d ", r.original.number, r.target.number)
+		// mark this partition for removal
+		original := table.Partitions[indexToPosition[r.original.number]]
+		target := table.Partitions[indexToPosition[r.target.number]]
+		originalName := original.Name
+		originalType := original.Type
+		originalGUID := original.GUID
+
+		// swap values
+		original.Name = target.Name
+		original.Type = target.Type
+		original.GUID = target.GUID
+
+		target.Name = originalName
+		target.Type = originalType
+		target.GUID = originalGUID
+	}
+	// write the updated partition table
+	if err := d.Partition(table); err != nil {
+		return fmt.Errorf("failed to write updated partition table: %v", err)
+	}
+	return nil
+}
+
 func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error {
 	for _, r := range resizes {
 		if r.original.size <= r.target.size {
@@ -205,6 +307,7 @@ func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget, fixErrors 
 		}
 
 		// perform the shrink
+		// note that resize will leave it alone if it already is the desired size
 		p := d.Backend.Path()
 		if p == "" {
 			return fmt.Errorf("cannot shrink filesystem: disk backend has no path")
