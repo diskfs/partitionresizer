@@ -50,7 +50,7 @@ func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error
 		return err
 	}
 
-	// swap the partitions
+	// swap the partitions, specifically the labels, Type GUIDs, and UUIDs, as well as attributes flags
 	if err := swapPartitions(d, resizes); err != nil {
 		return err
 	}
@@ -246,7 +246,8 @@ func removePartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	return nil
 }
 
-// swapPartitions swaps the labels, Type GUIDs, and UUIDs of the original and target partitions
+// swapPartitions swaps the labels, Type GUIDs, and UUIDs of the original and target partitions,
+// as well as any attributes flags.
 func swapPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	// first create the new partitions in the partition table and write it
 	tableRaw, err := d.GetPartitionTable()
@@ -273,15 +274,18 @@ func swapPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 		originalName := original.Name
 		originalType := original.Type
 		originalGUID := original.GUID
+		originalAttributes := original.Attributes
 
 		// swap values
 		original.Name = target.Name
 		original.Type = target.Type
 		original.GUID = target.GUID
+		original.Attributes = target.Attributes
 
 		target.Name = originalName
 		target.Type = originalType
 		target.GUID = originalGUID
+		target.Attributes = originalAttributes
 	}
 	// write the updated partition table
 	if err := d.Partition(table); err != nil {

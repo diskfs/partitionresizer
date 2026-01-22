@@ -77,6 +77,9 @@ func copyOneFile(src fs.FS, dst filesystem.FileSystem, path string, info fs.File
 
 	// Restore timestamps *after* data is written (tar semantics)
 	atime := getAccessTime(info)
+	if atime.IsZero() {
+		atime = info.ModTime() // fallback
+	}
 	return dst.Chtimes(
 		path,
 		info.ModTime(), // creation time fallback if not available

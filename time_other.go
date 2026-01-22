@@ -10,6 +10,11 @@ import (
 )
 
 func getAccessTime(info fs.FileInfo) time.Time {
-	stat := info.Sys().(*unix.Stat_t)
+	sys := info.Sys()
+	if sys == nil {
+		// return zero time
+		return time.Time{}
+	}
+	stat := sys.(*unix.Stat_t)
 	return time.Unix(stat.Atim.Sec, stat.Atim.Nsec)
 }
