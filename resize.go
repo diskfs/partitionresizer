@@ -3,13 +3,12 @@ package partitionresizer
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log"
 
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/filesystem"
 	"github.com/diskfs/go-diskfs/partition/gpt"
-	"github.com/diskfs/go-diskfs/partition/part"
+	"github.com/diskfs/go-diskfs/sync"
 )
 
 type copyData struct {
@@ -137,36 +136,11 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 		case err != nil && !errors.Is(err, &disk.UnknownFilesystemError{}):
 			return fmt.Errorf("failed to get filesystem for partition %s: %v", r.original.label, err)
 		case err != nil || fs.Type() == filesystem.TypeSquashfs:
-			// copy raw data using a pipe so reads feed writes concurrently
-			pr, pw := io.Pipe()
-			ch := make(chan copyData, 1)
-
-			go func() {
-				defer func() { _ = pw.Close() }()
-				read, err := d.ReadPartitionContents(r.original.number, pw)
-				ch <- copyData{count: read, err: err}
-			}()
-
-			written, err := d.WritePartitionContents(r.target.number, pr)
-			var ierr *part.IncompletePartitionWriteError
-			if err != nil && !errors.As(err, &ierr) {
-				return fmt.Errorf("failed to write raw data for partition %s: %v", r.original.label, err)
+			log.Printf("partition %d -> %d: performing raw data copy for filesystem type %v", r.original.number, r.target.number, fs.Type())
+			if err := sync.CopyPartitionRaw(d, r.original.number, r.target.number); err != nil {
+				return fmt.Errorf("failed to copy raw data for partition %s: %v", r.original.label, err)
 			}
-
-			readData := <-ch
-			if readData.err != nil {
-				return fmt.Errorf("failed to read raw data for partition %s: %v", r.original.label, readData.err)
-			}
-			if readData.count != written {
-				return fmt.Errorf("mismatched read/write sizes for partition %s: read %d bytes, wrote %d bytes", r.original.label, readData.count, written)
-			}
-			log.Printf("partition %d -> %d: filesystem %v copied byte for byte, %d bytes copied", r.original.number, r.target.number, fs.Type(), written)
-			if err := verifyBlockCopy(d, r, readData.count); err != nil {
-				return fmt.Errorf("verification failed for partition %s: %v", r.original.label, err)
-			}
-			log.Printf("partition %d -> %d: filesystem %v copy verified", r.original.number, r.target.number, fs.Type())
 		case fs.Type() == filesystem.TypeExt4:
-			// create a new filesystem on the new partition
 			newFS, err := d.CreateFilesystem(disk.FilesystemSpec{
 				Partition:   r.target.number,
 				FSType:      filesystem.TypeExt4,
@@ -176,11 +150,10 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 				return fmt.Errorf("failed to create ext4 filesystem for new partition %s: %v", r.original.label, err)
 			}
 			// use filesystem copy
-			if err := CopyFileSystem(fs, newFS); err != nil {
+			if err := sync.CopyFileSystem(fs, newFS); err != nil {
 				return fmt.Errorf("failed to copy ext4 filesystem data for partition %s: %v", r.original.label, err)
 			}
-			log.Printf("partition %d -> %d: filesystem %v copied file content", r.original.number, r.target.number, fs.Type())
-			if err := CompareFS(fs, newFS); err != nil {
+			if err := sync.CompareFS(fs, newFS); err != nil {
 				return fmt.Errorf("verification failed for partition %s: %v", r.original.label, err)
 			}
 			log.Printf("partition %d -> %d: filesystem %v copy verified", r.original.number, r.target.number, fs.Type())
@@ -195,11 +168,11 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 				return fmt.Errorf("failed to create FAT32 filesystem for new partition %s: %v", r.original.label, err)
 			}
 			// use filesystem copy
-			if err := CopyFileSystem(fs, newFS); err != nil {
+			if err := sync.CopyFileSystem(fs, newFS); err != nil {
 				return fmt.Errorf("failed to copy FAT32 filesystem data for partition %s: %v", r.original.label, err)
 			}
 			log.Printf("partition %d -> %d: filesystem %v copied file content", r.original.number, r.target.number, fs.Type())
-			if err := CompareFS(fs, newFS); err != nil {
+			if err := sync.CompareFS(fs, newFS); err != nil {
 				return fmt.Errorf("verification failed for partition %s: %v", r.original.label, err)
 			}
 			log.Printf("partition %d -> %d: filesystem %v copy verified", r.original.number, r.target.number, fs.Type())
