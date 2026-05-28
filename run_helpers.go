@@ -6,6 +6,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/diskfs/go-diskfs/disk"
 	"github.com/diskfs/go-diskfs/partition/gpt"
@@ -66,7 +69,15 @@ func resizeFilesystem(
 	}
 	switch deviceType {
 	case disk.DeviceTypeBlockDevice:
-		return execResize2fs(device, newSizeMB, fixErrors)
+		// resize2fs takes the *partition* device, not the whole-disk
+		// device, so we resolve "/dev/sda" + partition number 9 to
+		// "/dev/sda9" (or whatever the kernel calls that slot —
+		// "/dev/nvme0n1p9", "/dev/mmcblk0p9", etc.) via sysfs.
+		partDevice, err := partitionDevicePath(device, filesystemData.number, "")
+		if err != nil {
+			return fmt.Errorf("cannot find partition device for %s partition %d: %w", device, filesystemData.number, err)
+		}
+		return execResize2fs(partDevice, newSizeMB, fixErrors)
 	case disk.DeviceTypeFile:
 		// copy the partition, then resize it, then copy it back into the original disk image
 		tmpFile, err2 := os.CreateTemp("", partTmpFilename)
@@ -157,4 +168,46 @@ func planResizes(
 
 	// recalculate resizes with shrinking
 	return calculateResizes(d.Size, table.Partitions, prTargetsWithShrink)
+}
+
+// partitionDevicePath maps a whole-disk path (e.g. "/dev/sda") and a
+// partition number to the partition's device path (e.g. "/dev/sda9",
+// "/dev/nvme0n1p9", "/dev/mmcblk0p9").
+//
+// Naming conventions for partition device nodes differ by disk type,
+// so we look up the kernel partition name via sysfs rather than
+// hardcoding the convention: each /sys/class/block/<disk>/<part>/
+// directory holds a "partition" file containing the partition number
+// and a directory named after the kernel partition name.
+//
+// If syspath is empty, /sys is used. Returns an error if no matching
+// partition is found under sysfs.
+func partitionDevicePath(diskPath string, partNumber int, syspath string) (string, error) {
+	if syspath == "" {
+		syspath = sysDefaultPath
+	}
+	diskBase := filepath.Base(diskPath)
+	diskSysDir := filepath.Join(syspath, "class", "block", diskBase)
+	entries, err := os.ReadDir(diskSysDir)
+	if err != nil {
+		return "", fmt.Errorf("read sysfs dir %s: %w", diskSysDir, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		partFile := filepath.Join(diskSysDir, e.Name(), "partition")
+		raw, err := os.ReadFile(partFile)
+		if err != nil {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil {
+			continue
+		}
+		if n == partNumber {
+			return filepath.Join("/dev", e.Name()), nil
+		}
+	}
+	return "", fmt.Errorf("partition %d not found under %s", partNumber, diskSysDir)
 }

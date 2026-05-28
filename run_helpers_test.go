@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -192,5 +193,87 @@ func TestPlanResizes(t *testing.T) {
 				t.Errorf("target %d size = %d, want %d", resizes[1].target.number, resizes[1].target.size, 5*GB)
 			}
 		})
+	})
+}
+
+// TestPartitionDevicePath verifies that partitionDevicePath resolves
+// a whole-disk path + partition number to the kernel-named partition
+// device path via a sysfs lookup. Two fake-sysfs trees cover the
+// common naming conventions:
+//
+//   - sda → sda9 (the traditional convention used by most SATA/SCSI
+//     devices, where the partition number is appended directly).
+//   - nvme0n1 → nvme0n1p9 ("p" prefix before the number, used by
+//     NVMe, eMMC, and other devices whose name already ends in a
+//     digit so a bare "9" would be ambiguous).
+//
+// Hardcoding the convention based on the disk path is the wrong
+// approach (it gets mmcblk, nvme, virtblk, loop, and similar wrong),
+// which is why we use a sysfs lookup instead.
+func TestPartitionDevicePath(t *testing.T) {
+	tmp := t.TempDir()
+	sysClassBlock := filepath.Join(tmp, "class", "block")
+
+	// Set up fake sda with partitions sda1 and sda9.
+	for _, p := range []struct {
+		name string
+		num  string
+	}{
+		{"sda1", "1"},
+		{"sda9", "9"},
+	} {
+		if err := os.MkdirAll(filepath.Join(sysClassBlock, "sda", p.name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sysClassBlock, "sda", p.name, "partition"), []byte(p.num+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Set up fake nvme0n1 with partitions nvme0n1p1 and nvme0n1p9.
+	for _, p := range []struct {
+		name string
+		num  string
+	}{
+		{"nvme0n1p1", "1"},
+		{"nvme0n1p9", "9"},
+	} {
+		if err := os.MkdirAll(filepath.Join(sysClassBlock, "nvme0n1", p.name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sysClassBlock, "nvme0n1", p.name, "partition"), []byte(p.num+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("sda partition 9", func(t *testing.T) {
+		got, err := partitionDevicePath("/dev/sda", 9, tmp)
+		if err != nil {
+			t.Fatalf("partitionDevicePath: %v", err)
+		}
+		if got != "/dev/sda9" {
+			t.Errorf("partitionDevicePath = %q, want /dev/sda9", got)
+		}
+	})
+	t.Run("nvme0n1 partition 9", func(t *testing.T) {
+		got, err := partitionDevicePath("/dev/nvme0n1", 9, tmp)
+		if err != nil {
+			t.Fatalf("partitionDevicePath: %v", err)
+		}
+		if got != "/dev/nvme0n1p9" {
+			t.Errorf("partitionDevicePath = %q, want /dev/nvme0n1p9", got)
+		}
+	})
+	t.Run("partition not found", func(t *testing.T) {
+		_, err := partitionDevicePath("/dev/sda", 42, tmp)
+		if err == nil {
+			t.Fatal("expected error for non-existent partition number")
+		}
+	})
+	t.Run("disk not found", func(t *testing.T) {
+		_, err := partitionDevicePath("/dev/sdz", 1, tmp)
+		if err == nil {
+			t.Fatal("expected error for non-existent disk")
+		}
 	})
 }
