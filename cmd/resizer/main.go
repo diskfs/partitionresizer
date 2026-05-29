@@ -16,6 +16,7 @@ var rootCmd = func() *cobra.Command {
 		growPartitions  []string
 		fixErrors       bool
 		dryRun          bool
+		preserveNumbers bool
 	)
 	cmd := &cobra.Command{
 		Use:   "resizer",
@@ -74,7 +75,7 @@ var rootCmd = func() *cobra.Command {
 			if len(args) > 0 {
 				disk = args[0]
 			}
-			if err := resizer.Run(disk, shrinkPartitionPtr, growPartitionsParsed, fixErrors, dryRun); err != nil {
+			if err := resizer.Run(disk, shrinkPartitionPtr, growPartitionsParsed, fixErrors, dryRun, preserveNumbers); err != nil {
 				log.Fatalf("Resize operation failed: %v", err)
 			}
 		},
@@ -83,6 +84,7 @@ var rootCmd = func() *cobra.Command {
 	cmd.Flags().StringSliceVar(&growPartitions, "grow-partition", []string{}, "Partitions to grow, along with their desired sizes, in format identifier:partition:size, see help (e.g. name:sda1:20G or label:EFI System:100M)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "If set, will only simulate the resize operations without making any changes")
 	cmd.Flags().BoolVar(&fixErrors, "fix-errors", false, "If set, will attempt to fix any ext4 filesystem errors found during fsck before shrinking")
+	cmd.Flags().BoolVar(&preserveNumbers, "preserve-numbers", false, "If set, a grown partition that is relocated is renumbered back to its original partition number, so labels keep their original partition numbers (e.g. /dev/sda2)")
 	return cmd
 }
 

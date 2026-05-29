@@ -239,6 +239,111 @@ func TestRemovePartitions(t *testing.T) {
 	}
 }
 
+func TestRenumberPartitions(t *testing.T) {
+	// Model the state after createPartitions+copy+swap for two grown partitions:
+	// originals 2 and 3 (now carrying throwaway identities) plus their relocated
+	// copies in slots 5 and 6 (carrying the real labels). renumberPartitions must
+	// drop the originals and move the relocated copies back to numbers 2 and 3.
+	workDir := t.TempDir()
+	f, err := os.CreateTemp(workDir, "disk.img")
+	if err != nil {
+		t.Fatalf("failed to create temp disk image: %v", err)
+	}
+	if err := os.Truncate(f.Name(), 1*GB); err != nil {
+		t.Fatalf("failed to truncate disk image: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	backend := file.New(f, false)
+	d, err := diskfs.OpenBackend(backend, diskfs.WithOpenMode(diskfs.ReadWrite))
+	if err != nil {
+		t.Fatalf("failed to open disk: %v", err)
+	}
+	var offset uint64 = 2048
+	table := &gpt.Table{
+		Partitions: []*gpt.Partition{
+			{Index: 1, Start: offset, Size: 36 * MB, Type: gpt.LinuxFilesystem, Name: "part1"},
+			// originals, to be dropped
+			{Index: 2, Start: offset + 36*MB, Size: 100 * MB, Type: gpt.LinuxFilesystem, Name: "IMGA_old"},
+			{Index: 3, Start: offset + 36*MB + 100*MB, Size: 50 * MB, Type: gpt.LinuxFilesystem, Name: "DATA_old"},
+			{Index: 4, Start: offset + 36*MB + 100*MB + 50*MB, Size: 36 * MB, Type: gpt.LinuxFilesystem, Name: "part4"},
+			// relocated copies carrying the real identities, to be renumbered to 2 and 3
+			{Index: 5, Start: offset + 36*MB + 100*MB + 50*MB + 36*MB, Size: 300 * MB, Type: gpt.LinuxFilesystem, Name: "IMGA"},
+			{Index: 6, Start: offset + 36*MB + 100*MB + 50*MB + 36*MB + 300*MB, Size: 200 * MB, Type: gpt.LinuxFilesystem, Name: "DATA"},
+		},
+	}
+	if err := d.Partition(table); err != nil {
+		t.Fatalf("failed to write partition table: %v", err)
+	}
+	// capture the relocated copies' on-disk starts so we can confirm renumbering keeps
+	// the data in place and only changes the slot number
+	wantStart := make(map[string]uint64)
+	for _, p := range table.Partitions {
+		wantStart[p.Name] = p.Start
+	}
+
+	resizes := []partitionResizeTarget{
+		{
+			original: partitionData{number: 2, label: "IMGA"},
+			target:   partitionData{number: 5, label: "IMGA"},
+		},
+		{
+			original: partitionData{number: 3, label: "DATA"},
+			target:   partitionData{number: 6, label: "DATA"},
+		},
+	}
+
+	if err := renumberPartitions(d, resizes); err != nil {
+		t.Fatalf("renumberPartitions failed: %v", err)
+	}
+
+	tableRaw, err := d.GetPartitionTable()
+	if err != nil {
+		t.Fatalf("failed to get partition table: %v", err)
+	}
+	newTable, ok := tableRaw.(*gpt.Table)
+	if !ok {
+		t.Fatalf("unsupported partition table type, only GPT is supported")
+	}
+
+	byIndex := make(map[int]*gpt.Partition)
+	for _, p := range newTable.Partitions {
+		if p.Type == gpt.Unused {
+			continue
+		}
+		byIndex[p.Index] = p
+	}
+
+	// originals are gone, relocated copies now own numbers 2 and 3
+	wantByNumber := map[int]string{1: "part1", 2: "IMGA", 3: "DATA", 4: "part4"}
+	if len(byIndex) != len(wantByNumber) {
+		t.Fatalf("expected %d partitions after renumber, got %d", len(wantByNumber), len(byIndex))
+	}
+	for number, name := range wantByNumber {
+		p, ok := byIndex[number]
+		if !ok {
+			t.Fatalf("expected partition number %d (%s) to exist after renumber", number, name)
+		}
+		if p.Name != name {
+			t.Errorf("partition %d: expected label %q, got %q", number, name, p.Name)
+		}
+	}
+	// the renumbered partitions must keep the relocated copies' on-disk location
+	if got := byIndex[2].Start; got != wantStart["IMGA"] {
+		t.Errorf("renumbered IMGA start moved: expected %d, got %d", wantStart["IMGA"], got)
+	}
+	if got := byIndex[3].Start; got != wantStart["DATA"] {
+		t.Errorf("renumbered DATA start moved: expected %d, got %d", wantStart["DATA"], got)
+	}
+	// the old high-numbered slots must be free
+	if _, ok := byIndex[5]; ok {
+		t.Errorf("slot 5 should have been vacated by renumbering")
+	}
+	if _, ok := byIndex[6]; ok {
+		t.Errorf("slot 6 should have been vacated by renumbering")
+	}
+}
+
 func TestCopyFilesystems(t *testing.T) {
 	// create a duplicate disk with a partition with the specified filesystem type
 	tmpdir := t.TempDir()

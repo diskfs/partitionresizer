@@ -15,7 +15,9 @@ import (
 // if it has an identifiable ext4 filesystem to shrink, and there is enough space to shrink it.
 // It always will try to run e2fsck before shrinking. By default, it will not fix any found errors, in which case it will
 // error out if any filesystem errors are found. If fixErrors is true, it will attempt to fix any found errors.
-func Run(disk string, shrinkPartition *PartitionIdentifier, growPartitions []PartitionChange, fixErrors, dryRun bool) error {
+// If preserveNumbers is true, any partition that is relocated while growing is renumbered back to its original
+// partition number once the data has been copied, so its partition number (e.g. /dev/sda2) is unchanged by the resize.
+func Run(disk string, shrinkPartition *PartitionIdentifier, growPartitions []PartitionChange, fixErrors, dryRun, preserveNumbers bool) error {
 	// we always work solely with partition UUIDs internally, so convert any other identifiers to UUIDs
 	// see if a disk was specified
 	// no disk specified, try to discover
@@ -75,5 +77,5 @@ func Run(disk string, shrinkPartition *PartitionIdentifier, growPartitions []Par
 		return nil
 	}
 	log.Printf("Will perform resizes %+v", resizes)
-	return resize(d, resizes, fixErrors)
+	return resize(d, resizes, fixErrors, preserveNumbers)
 }

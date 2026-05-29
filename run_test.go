@@ -16,6 +16,18 @@ const (
 )
 
 func TestRun(t *testing.T) {
+	for _, preserveNumbers := range []bool{false, true} {
+		name := "renumber"
+		if preserveNumbers {
+			name = "preserveNumbers"
+		}
+		t.Run(name, func(t *testing.T) {
+			runResizeTest(t, preserveNumbers)
+		})
+	}
+}
+
+func runResizeTest(t *testing.T, preserveNumbers bool) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "diskfull.img")
 	if err := testCopyFile(diskfullImg, tmpFile); err != nil {
@@ -38,10 +50,14 @@ func TestRun(t *testing.T) {
 	}
 	table0 := tableRaw0.(*gpt.Table)
 	var origShrinkSize int64
+	origNumber := map[string]int{}
 	for _, p := range table0.Partitions {
+		if p.Type == gpt.Unused {
+			continue
+		}
+		origNumber[p.Name] = int(p.Index)
 		if p.Name == "shrinker" {
 			origShrinkSize = int64(p.GetSize())
-			break
 		}
 	}
 	if origShrinkSize == 0 {
@@ -54,7 +70,7 @@ func TestRun(t *testing.T) {
 		NewPartitionChange(IdentifierByLabel, "partb", 2*GB),
 		NewPartitionChange(IdentifierByLabel, "ESP", 1*GB),
 	}
-	if err := Run(tmpFile, &shrink, growList, false, false); err != nil {
+	if err := Run(tmpFile, &shrink, growList, false, false, preserveNumbers); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -113,6 +129,11 @@ func TestRun(t *testing.T) {
 			}
 		default:
 			t.Errorf("unexpected active partition %q", name)
+		}
+		// with preserveNumbers, every partition (including the relocated grown ones)
+		// must keep the number it had before the resize
+		if preserveNumbers && int(p.Index) != origNumber[name] {
+			t.Errorf("%s partition number = %d, want %d (preserveNumbers)", name, p.Index, origNumber[name])
 		}
 		seen[name] = true
 	}
