@@ -9,6 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -250,32 +253,51 @@ func TestChaosKill(t *testing.T) {
 		t.Fatalf("build resizer: %v\n%s", err, out)
 	}
 
-	// base disk: P9 pre-shrunk so the grow has free space to work in
+	// fresh base (NOT pre-shrunk): the chaos performs the full two-step
+	// resize -- shrink P9, then grow ESP/IMGA/IMGB -- so kills can land in the
+	// shrink steps (resize2fs) as well as create/copy/update.
 	base := buildSampleLayout(t)
-	if err := Run(base.path, nil, shrinkP9, false, false, false); err != nil {
-		t.Fatalf("pre-shrink: %v", err)
-	}
-	p9Len := int((defaultP9MB - 600) * MB)
 	cfgLen := int(configMB * MB)
-	p9Sum := partitionRegionSum(t, base.path, base.p9Start, p9Len)
 	cfgSum := partitionRegionSum(t, base.path, base.configStart, cfgLen)
 
-	growArgs := []string{
+	shrinkArgs := []string{"--grow-partition", "label:P9:300M"} // Case 1: shrink P9 in place
+	growArgs := []string{                                       // Case 2: grow into the freed space
 		"--preserve-numbers",
 		"--grow-partition", "label:ESP:96M",
 		"--grow-partition", "label:IMGA:200M",
 		"--grow-partition", "label:IMGB:200M",
 	}
-	rng := rand.New(rand.NewSource(1))
+	// Seed from CHAOS_SEED if set (so a failing run is reproducible), else from
+	// the clock so repeated runs explore different kill timings.
+	seed := time.Now().UnixNano()
+	if s := os.Getenv("CHAOS_SEED"); s != "" {
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			seed = v
+		}
+	}
+	t.Logf("CHAOS_SEED=%d", seed)
+	rng := rand.New(rand.NewSource(seed))
 	const trials = 5
 	for trial := 0; trial < trials; trial++ {
-		disk := filepath.Join(t.TempDir(), "disk.img")
+		dir := t.TempDir()
+		disk := filepath.Join(dir, "disk.img")
 		if err := testCopyFile(base.path, disk); err != nil {
 			t.Fatalf("copy base disk: %v", err)
 		}
-		kills := runGrowWithRandomKills(t, bin, append(growArgs, disk), rng)
+		scratch := filepath.Join(dir, "tmp")
+		if err := os.MkdirAll(scratch, 0o755); err != nil {
+			t.Fatalf("mkdir scratch: %v", err)
+		}
+
+		// Phase 1: shrink P9, then Phase 2: grow -- each driven through random
+		// SIGKILLs and re-run to completion.
+		ks := runPhaseWithRandomKills(t, bin, scratch, append(append([]string{}, shrinkArgs...), disk), rng)
+		kg := runPhaseWithRandomKills(t, bin, scratch, append(append([]string{}, growArgs...), disk), rng)
 
 		after := gptByName(t, disk)
+		if got := int64(after["P9"].GetSize()); got != (defaultP9MB-600)*MB {
+			t.Errorf("trial %d: P9 size = %d, want %d", trial, got, (defaultP9MB-600)*MB)
+		}
 		if after["ESP"].Index != espIndex || after["IMGA"].Index != imgaIndex || after["IMGB"].Index != imgbIndex {
 			t.Errorf("trial %d: indices not preserved", trial)
 		}
@@ -286,21 +308,23 @@ func TestChaosKill(t *testing.T) {
 			partitionRegionSum(t, disk, after["IMGB"].Start, 1*MB) != base.imgbSum {
 			t.Errorf("trial %d: IMG content not preserved", trial)
 		}
-		if partitionRegionSum(t, disk, base.p9Start, p9Len) != p9Sum {
-			t.Errorf("trial %d: P9 (persist) corrupted by interrupted resize", trial)
-		}
 		if partitionRegionSum(t, disk, base.configStart, cfgLen) != cfgSum {
 			t.Errorf("trial %d: CONFIG corrupted by interrupted resize", trial)
 		}
-		t.Logf("trial %d converged after %d kill(s)", trial, kills)
+		if got := readPartitionFile(t, disk, p9Index, "/p9-marker.txt"); got != "persist content" {
+			t.Errorf("trial %d: P9 data lost: marker = %q", trial, got)
+		}
+		t.Logf("trial %d converged: %d shrink-kill(s), %d grow-kill(s)", trial, ks, kg)
 	}
 }
 
-// runGrowWithRandomKills spawns the resizer, SIGKILLs it after a random delay,
-// and re-runs until it completes successfully; returns the number of kills. A
-// non-zero exit that we did NOT cause is a real failure (resume must always be
-// able to finish).
-func runGrowWithRandomKills(t *testing.T, bin string, args []string, rng *rand.Rand) int {
+// runPhaseWithRandomKills spawns the resizer for one phase, SIGKILLs its whole
+// process group after a random delay (so any resize2fs child dies too), and
+// re-runs until it completes; returns the number of kills. TMPDIR is pointed at
+// scratch and cleaned after each kill so a killed shrink can't leak its ~GB temp
+// copy. A non-zero exit that we did NOT cause is a real failure (resume must
+// always be able to finish).
+func runPhaseWithRandomKills(t *testing.T, bin, scratch string, args []string, rng *rand.Rand) int {
 	t.Helper()
 	// SIGKILL a random number of times at varied points, then run once
 	// un-killed; that final run must complete (the idempotency assertion).
@@ -308,6 +332,9 @@ func runGrowWithRandomKills(t *testing.T, bin string, args []string, rng *rand.R
 	kills := 0
 	for attempt := 0; attempt < 80; attempt++ {
 		cmd := exec.Command(bin, args...)
+		cmd.Env = append(os.Environ(), "TMPDIR="+scratch)
+		// own process group, so a SIGKILL can take down any resize2fs child too
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Start(); err != nil {
@@ -331,11 +358,41 @@ func runGrowWithRandomKills(t *testing.T, bin string, args []string, rng *rand.R
 			}
 			t.Fatalf("resizer exited with error without being killed (resume not safe): %v\nstderr:\n%s", werr, stderr.String())
 		case <-time.After(delay):
-			_ = cmd.Process.Kill()
+			// kill the whole process group (negative pid) so resize2fs dies too
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			<-done
 			kills++
+			// record how far the killed run got, so the long run can show
+			// whether kills land at every intermediate pipeline step
+			t.Logf("KILL_STEP=%s", chaosStepFromLog(stderr.String()))
+			// drop any partial resize2fs temp the killed run left behind
+			if matches, _ := filepath.Glob(filepath.Join(scratch, "partresizer-shrinkfs-*")); matches != nil {
+				for _, m := range matches {
+					_ = os.RemoveAll(m)
+				}
+			}
 		}
 	}
 	t.Fatalf("resize did not converge within the attempt cap")
 	return kills
+}
+
+// chaosStepFromLog reports the furthest pipeline step the resizer had reached,
+// from its log output, so we can see where a SIGKILL interrupted it. Steps are
+// checked in pipeline order; the last one present is the furthest reached.
+func chaosStepFromLog(s string) string {
+	markers := []struct{ sub, step string }{
+		{"Resizing filesystem on partition", "shrinkFilesystems"},
+		{"Resizing partition", "shrinkPartitions"},
+		{"creating new partition", "createPartitions"},
+		{"copying data from", "copyFilesystems"},
+		{"finalizing partition", "updatePartitions"},
+	}
+	step := "preflight"
+	for _, m := range markers {
+		if strings.Contains(s, m.sub) {
+			step = m.step
+		}
+	}
+	return step
 }
