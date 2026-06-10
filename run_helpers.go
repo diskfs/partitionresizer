@@ -121,10 +121,50 @@ func planResizes(
 		return nil, err
 	}
 
-	// try to calculate without shrinking
-	resizes, err := calculateResizes(d.Size, table.Partitions, prTargets)
+	// Resume support: an interrupted run may already have created the relocated
+	// "<label>_resized2" partition for some grows. Those targets already occupy
+	// their final space, so they must be excluded from (re)planning. If we
+	// instead fed them back through calculateResizes, their space would count as
+	// occupied, the grow would no longer fit, and a second shrink of the shrink
+	// partition would be planned -- driving its size negative
+	// (diskfs/partitionresizer#13). Split the grows already created from those
+	// still pending, and reuse the existing partition's geometry as the target
+	// for the created ones.
+	existingByName := make(map[string]*gpt.Partition)
+	for _, p := range table.Partitions {
+		if p.Type == gpt.Unused {
+			continue
+		}
+		existingByName[p.Name] = p
+	}
+	var done, pending []partitionResizeTarget
+	for _, pr := range prTargets {
+		alt, ok := existingByName[getAlternateLabel(pr.original.label)]
+		if !ok {
+			pending = append(pending, pr)
+			continue
+		}
+		start := alt.GetStart()
+		size := int64(alt.GetSize())
+		pr.target = partitionData{
+			label:  alt.Name,
+			size:   size,
+			start:  start,
+			end:    start + size - 1,
+			number: alt.Index,
+		}
+		done = append(done, pr)
+	}
+
+	// every grow is already created: nothing left to allocate or shrink
+	if len(pending) == 0 {
+		return done, nil
+	}
+
+	// try to calculate without shrinking, for the pending grows only
+	resizes, err := calculateResizes(d.Size, table.Partitions, pending)
 	if err == nil {
-		return resizes, nil
+		return append(done, resizes...), nil
 	}
 	var spaceErr *InsufficientSpaceError
 	if !errors.As(err, &spaceErr) {
@@ -136,9 +176,9 @@ func planResizes(
 		return nil, fmt.Errorf("insufficient space to perform requested partition grows, and no shrink partition specified")
 	}
 
-	// compute total space to grow (rounded up to next GB)
+	// compute total space to grow (rounded up to next GB) for the pending grows
 	var totalGrow int64
-	for _, gp := range prTargets {
+	for _, gp := range pending {
 		totalGrow += gp.target.size
 	}
 	if totalGrow%GB != 0 {
@@ -164,10 +204,14 @@ func planResizes(
 		target:   target,
 	}
 	prTargetsWithShrink := []partitionResizeTarget{shrink}
-	prTargetsWithShrink = append(prTargetsWithShrink, prTargets...)
+	prTargetsWithShrink = append(prTargetsWithShrink, pending...)
 
 	// recalculate resizes with shrinking
-	return calculateResizes(d.Size, table.Partitions, prTargetsWithShrink)
+	resizes, err = calculateResizes(d.Size, table.Partitions, prTargetsWithShrink)
+	if err != nil {
+		return nil, err
+	}
+	return append(done, resizes...), nil
 }
 
 // partitionDevicePath maps a whole-disk path (e.g. "/dev/sda") and a

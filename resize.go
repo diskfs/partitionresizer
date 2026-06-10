@@ -154,6 +154,14 @@ func copyFilesystems(d *disk.Disk, resizes []partitionResizeTarget) error {
 				return fmt.Errorf("failed to copy raw data for partition %s: %v", r.original.label, err)
 			}
 		case fs.Type() == filesystem.TypeExt4:
+			// On resume, the target may already hold a complete, matching copy
+			// from a prior run; in that case skip the reformat+recopy. CompareFS
+			// is a structural/content equality check against the source, not a
+			// filesystem integrity check.
+			if existing, eerr := d.GetFilesystem(r.target.number); eerr == nil && sync.CompareFS(fs, existing) == nil {
+				log.Printf("partition %d -> %d: target filesystem already matches source, skipping copy", r.original.number, r.target.number)
+				continue
+			}
 			newFS, err := d.CreateFilesystem(disk.FilesystemSpec{
 				Partition:   r.target.number,
 				FSType:      filesystem.TypeExt4,

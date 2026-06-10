@@ -28,4 +28,7 @@ jobs:
       - name: Create test tmp dir
         run: sudo mkdir /mnt/tmp && sudo chmod 1777 /mnt/tmp
       - name: test
-        run: TMPDIR=/mnt/tmp go test ./...
+        # 30m timeout: the restart-safety tests in resume_test.go run real
+        # end-to-end resizes (shrink + copy of a multi-GB fixture), which can
+        # exceed the default 10m. Use `-short` to skip them in a fast loop.
+        run: TMPDIR=/mnt/tmp go test -timeout 30m ./...
