@@ -11,11 +11,6 @@ import (
 	"github.com/diskfs/go-diskfs/sync"
 )
 
-type copyData struct {
-	count int64
-	err   error
-}
-
 // resize performs the actual resize operations on the given disk
 func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error {
 	// do any shrinks first
