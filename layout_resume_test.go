@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/diskfs/go-diskfs"
@@ -462,4 +464,84 @@ func TestRunResumeGrow(t *testing.T) {
 			}
 		})
 	}
+}
+
+// gptDump renders the GPT partition table at path, sorted by on-disk start,
+// in MB with free-space gaps called out — for human inspection of how a resize
+// rearranges the disk.
+func gptDump(t *testing.T, path string) string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open disk: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	d, err := diskfs.OpenBackend(file.New(f, true))
+	if err != nil {
+		t.Fatalf("open backend: %v", err)
+	}
+	tr, err := d.GetPartitionTable()
+	if err != nil {
+		t.Fatalf("get table: %v", err)
+	}
+	type row struct {
+		idx         int
+		name        string
+		start, size int64
+	}
+	var rows []row
+	for _, p := range tr.(*gpt.Table).Partitions {
+		if p.Type == gpt.Unused {
+			continue
+		}
+		rows = append(rows, row{p.Index, p.Name, p.GetStart(), int64(p.GetSize())})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].start < rows[j].start })
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "    %-3s %-10s %10s %10s %10s\n", "#", "name", "startMB", "endMB", "sizeMB")
+	var prevEndMB int64
+	for _, r := range rows {
+		startMB := r.start / MB
+		endMB := (r.start + r.size) / MB
+		sizeMB := r.size / MB
+		if gap := startMB - prevEndMB; gap > 0 {
+			fmt.Fprintf(&b, "    %-3s %-10s %10s %10s %10d  <- free\n", "", "(free)", "", "", gap)
+		}
+		fmt.Fprintf(&b, "    %-3d %-10s %10d %10d %10d\n", r.idx, r.name, startMB, endMB, sizeMB)
+		prevEndMB = endMB
+	}
+	if tail := int64(defaultDiskMB) - prevEndMB; tail > 0 {
+		fmt.Fprintf(&b, "    %-3s %-10s %10s %10s %10d  <- free\n", "", "(free)", "", "", tail)
+	}
+	return b.String()
+}
+
+// TestLayoutStagesDump logs the GPT partition table at the four stages of the resize
+// scenario, by actually driving the resize. Run with -v to see the tables.
+func TestLayoutStagesDump(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow end-to-end resize test")
+	}
+	fx := buildSampleLayout(t)
+	t.Logf("Stage 1 - initial layout (disk %d MB):\n%s", defaultDiskMB, gptDump(t, fx.path))
+
+	// Stage 2: Case 1 shrinks P9 in place, freeing space at the end
+	if err := Run(fx.path, nil, shrinkP9, false, false, false); err != nil {
+		t.Fatalf("Case 1 (shrink P9): %v", err)
+	}
+	t.Logf("Stage 2 - after P9 ext4 shrink (freed 600 MB at end):\n%s", gptDump(t, fx.path))
+
+	// Stage 3: Case 2 up to and including copyFilesystems -- the *_resized2
+	// partitions have been created in the freed space and filled, originals
+	// still present
+	runResizeStepsUpTo(t, fx.path, dummyShrink(), growImages, true, stepCopyFilesystems, false, false)
+	t.Logf("Stage 3 - ESP/IMGA/IMGB_resized2 created and content copied (pre-updatePartitions):\n%s", gptDump(t, fx.path))
+
+	// Stage 4: resume to completion -- the single updatePartitions relabels and
+	// reindexes the *_resized2 partitions to the originals and removes the old
+	if err := Run(fx.path, nil, growImages, false, false, true); err != nil {
+		t.Fatalf("Case 2 resume to completion: %v", err)
+	}
+	t.Logf("Stage 4 - after updatePartitions (final):\n%s", gptDump(t, fx.path))
 }
