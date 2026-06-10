@@ -47,16 +47,19 @@ var rootCmd = func() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			// check validity of flags
 			var (
-				shrinkPartitionParsed resizer.PartitionIdentifier
-				growPartitionsParsed  []resizer.PartitionChange
-				disk                  string
+				shrinkPartitionPtr   *resizer.PartitionIdentifier
+				growPartitionsParsed []resizer.PartitionChange
+				disk                 string
 			)
 			if shrinkPartition != "" {
-				var err error
-				shrinkPartitionParsed, err = parsePartitionIdentifier(shrinkPartition)
+				parsed, err := parsePartitionIdentifier(shrinkPartition)
 				if err != nil {
 					log.Fatalf("Invalid shrink-partition value: %v", err)
 				}
+				// only pass a non-nil pointer when a shrink partition was given;
+				// passing &(nil interface) makes Run treat it as a real
+				// partition and panic in filterDisksByPartitions
+				shrinkPartitionPtr = &parsed
 			}
 			for _, gp := range growPartitions {
 				gpParsed, err := parsePartitionChange(gp)
@@ -71,7 +74,7 @@ var rootCmd = func() *cobra.Command {
 			if len(args) > 0 {
 				disk = args[0]
 			}
-			if err := resizer.Run(disk, &shrinkPartitionParsed, growPartitionsParsed, fixErrors, dryRun); err != nil {
+			if err := resizer.Run(disk, shrinkPartitionPtr, growPartitionsParsed, fixErrors, dryRun); err != nil {
 				log.Fatalf("Resize operation failed: %v", err)
 			}
 		},
