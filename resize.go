@@ -19,8 +19,11 @@ func isUnknownFilesystem(err error) bool {
 	return errors.As(err, &u)
 }
 
-// resize performs the actual resize operations on the given disk
-func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error {
+// resize performs the actual resize operations on the given disk.
+// When preserveNumbers is set, a relocated partition is renumbered back to its
+// original partition number after the copy, so that consumers referencing a
+// partition by number (e.g. boot loaders) continue to find it.
+func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors, preserveNumbers bool) error {
 	// do any shrinks first
 	// this is idempotent. If I have a 500MB partition with a 500MB filesystem,
 	// and shrink it to 400MB. If I stop, and then run it again, it will just say
@@ -57,9 +60,16 @@ func resize(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error
 		return err
 	}
 
-	// remove the old partitions
-	if err := removePartitions(d, resizes); err != nil {
-		return err
+	// remove the old partitions, optionally renumbering the relocated partitions
+	// back to their original partition numbers
+	if preserveNumbers {
+		if err := removeAndRenumberPartitions(d, resizes); err != nil {
+			return err
+		}
+	} else {
+		if err := removePartitions(d, resizes); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -218,6 +228,71 @@ func removePartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	// write the updated partition table
 	if err := d.Partition(table); err != nil {
 		return fmt.Errorf("failed to write updated partition table: %v", err)
+	}
+	return nil
+}
+
+// removeAndRenumberPartitions removes the original partitions and reassigns each
+// relocated target partition's GPT slot index to the original partition's number, so
+// the resized partition keeps the same partition number it had before. This is the
+// preserve-numbers counterpart to removePartitions, and must run after the data
+// has been copied and the identities swapped onto the target partitions. Removal and
+// renumbering are done in a single GPT table write so the device never persists an
+// intermediate state where the original numbers are gone but the relocated slots have
+// not yet been renumbered.
+//
+// The renumbered entry stays at its new on-disk offset, so the resulting GPT entries
+// end up out of disk-offset order. That is permitted by the GPT specification and is
+// invisible to consumers that locate a partition by its number (e.g. a boot loader
+// referencing (hd0,gptN)); no common tool treats it as an error, though some offer an
+// optional manual sort to restore offset order.
+func removeAndRenumberPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
+	tableRaw, err := d.GetPartitionTable()
+	if err != nil {
+		return err
+	}
+	table, ok := tableRaw.(*gpt.Table)
+	if !ok {
+		return fmt.Errorf("unsupported partition table type, only GPT is supported")
+	}
+	// map partition number -> position in the slice, captured before any mutation so
+	// that the lookups below are unaffected by the index reassignments we make.
+	indexToPosition := make(map[int]int)
+	for i, p := range table.Partitions {
+		indexToPosition[p.Index] = i
+	}
+	// slice positions of the original partitions to drop, keyed by position rather
+	// than partition number: once we reassign a target's Index to the original number,
+	// keying removal on Index would also match (and wrongly drop) the renumbered target.
+	removePositions := make(map[int]bool)
+	for _, r := range resizes {
+		if r.original.number == r.target.number {
+			log.Printf("partition %d %s: no change in partition number, no need to renumber", r.original.number, r.original.label)
+			continue
+		}
+		origPos, ok := indexToPosition[r.original.number]
+		if !ok {
+			return fmt.Errorf("original partition %d not found in partition table", r.original.number)
+		}
+		targetPos, ok := indexToPosition[r.target.number]
+		if !ok {
+			return fmt.Errorf("target partition %d not found in partition table", r.target.number)
+		}
+		log.Printf("renumbering partition %d -> %d (label %s) and removing original slot", r.target.number, r.original.number, r.original.label)
+		table.Partitions[targetPos].Index = r.original.number
+		removePositions[origPos] = true
+	}
+	// rebuild the slice, dropping the vacated original slots so their numbers are free
+	partitions := make([]*gpt.Partition, 0, len(table.Partitions))
+	for i, p := range table.Partitions {
+		if removePositions[i] {
+			continue
+		}
+		partitions = append(partitions, p)
+	}
+	table.Partitions = partitions
+	if err := d.Partition(table); err != nil {
+		return fmt.Errorf("failed to write renumbered partition table: %v", err)
 	}
 	return nil
 }
