@@ -241,8 +241,12 @@ func populateP9(t *testing.T, path string, n int) map[string]string {
 // SIGKILL models a process crash (writes already issued survive); it is not a
 // full power-loss model (no torn sectors / lost un-fsync'd writes).
 func TestChaosKill(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow chaos test")
+	// Opt-in soak/stress test, not a CI gate: it runs many full resizes under
+	// random SIGKILLs and is meant to run for minutes-to-hours, so `go test
+	// ./...` (and -short) skip it by default. Enable with RESIZER_CHAOS=1, or
+	// with CHAOS_GPT_DELAY (which additionally turns on the GPT-write-delay hook).
+	if testing.Short() || (os.Getenv("RESIZER_CHAOS") == "" && os.Getenv("CHAOS_GPT_DELAY") == "") {
+		t.Skip("opt-in chaos soak test; set RESIZER_CHAOS=1 to run")
 	}
 	if _, err := exec.LookPath("mksquashfs"); err != nil {
 		t.Skip("mksquashfs not available")

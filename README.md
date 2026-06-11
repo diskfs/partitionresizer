@@ -126,3 +126,56 @@ are read-only and an inconsistent filesystem aborts the resize; pass `fixErrors`
 to repair instead. squashfs sources are copied raw and have no applicable check,
 so a corrupt squashfs source is reproduced faithfully.
 
+## Testing
+
+The suite has three tiers, selected with `-short` and a few environment
+variables:
+
+| Invocation | What runs |
+|---|---|
+| `go test ./...` | All tests, including end-to-end shrinks/copies of multi-GB fixtures (slow). |
+| `go test -short ./...` | Skips those slow end-to-end fixtures; everything else still runs. |
+| `RESIZER_CHAOS=1 go test -run '^TestChaosKill$' .` | Adds the SIGKILL resume soak (see below). |
+
+The chaos soak is gated separately from `-short` because it is an open-ended
+stress run, not a pass/fail CI gate, so it stays off even in a full `go test
+./...`. Its environment knobs:
+
+| Variable | Effect |
+|---|---|
+| `RESIZER_CHAOS=1` | Enable the chaos soak. Without it (and without `CHAOS_GPT_DELAY`) the test skips. |
+| `CHAOS_SEED=<n>` | Seed the kill-timing RNG for a reproducible run. Default: random, logged as `CHAOS_SEED=<n>`. |
+| `CHAOS_GPT_DELAY=<dur>` | Enable the soak *and* build the resizer subprocess with `-tags chaos`, delaying around GPT-sector writes so kills can land inside the otherwise-instantaneous `updatePartitions`/`createPartitions` table writes (e.g. `5s`). |
+| `CHAOS_COPY_STATE=1` | After each kill, also classify the grow target's copied data as empty/partial/complete. |
+
+`-tags chaos` is not something you pass to `go test`: the chaos test builds the
+resizer subprocess with it internally when `CHAOS_GPT_DELAY` is set.
+
+### Chaos / resume soak test
+
+`TestChaosKill` is a stress test, not a CI gate. It repeatedly runs the full
+two-step resize (shrink the data partition, then grow the image/ESP partitions into the freed space) as a subprocess,
+SIGKILLs it at random points across the pipeline, then re-runs to completion and
+asserts the result always matches an uninterrupted resize. Because it is slow and
+meant to run for minutes-to-hours, `go test ./...` skips it by default; enable it
+explicitly:
+
+```sh
+# basic chaos run (kills land wherever timing puts them)
+RESIZER_CHAOS=1 go test -run '^TestChaosKill$' -timeout 30m .
+
+# reproduce a specific run
+RESIZER_CHAOS=1 CHAOS_SEED=12345 go test -run '^TestChaosKill$' -timeout 30m .
+
+# widen the window around GPT-table writes so kills can land inside the
+# updatePartitions/createPartitions writes (builds the resizer with -tags chaos)
+CHAOS_GPT_DELAY=5s go test -run '^TestChaosKill$' -timeout 40m .
+```
+
+Longer soaks are driven by an outer loop that re-invokes the test. It needs
+`mksquashfs` (squashfs-tools) in addition to `resize2fs`/`e2fsck`. After each
+kill the test logs the pipeline step it interrupted and the on-disk GPT integrity
+(primary/backup header and entry-array CRCs, and primary↔backup entry equality);
+set `CHAOS_COPY_STATE=1` to also classify the grow target's data copy as
+empty/partial/complete.
+
