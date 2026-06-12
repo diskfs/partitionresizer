@@ -17,6 +17,20 @@ import (
 // error out if any filesystem errors are found. If fixErrors is true, it will attempt to fix any found errors.
 // If preserveNumbers is true, any partition that is relocated while growing is renumbered back to its original
 // partition number once the data has been copied, so its partition number (e.g. /dev/sda2) is unchanged by the resize.
+//
+// Pre-flight integrity checks. Before any destructive operation, Run
+// integrity-checks every source filesystem it will read or modify -- the shrink
+// partition and each grow source. ext4 sources are checked with e2fsck and
+// fat32 sources with fsck.fat; by default the checks are read-only and an
+// inconsistent filesystem aborts the resize, while fixErrors upgrades them to
+// repair (e2fsck -y / fsck.fat -a). squashfs sources (read-only,
+// content-addressed, copied raw) have no applicable check and are copied as-is,
+// so a corrupt squashfs source is reproduced faithfully. Run does NOT perform
+// usage-specific pre-flight checks such as free-space policy; that remains the
+// caller's responsibility. When resuming a previously-interrupted run, Run
+// reuses an already-written target only when it structurally matches its source
+// via CompareFS; that comparison is a structure/content equality check, not a
+// filesystem integrity check.
 func Run(disk string, shrinkPartition *PartitionIdentifier, growPartitions []PartitionChange, fixErrors, dryRun, preserveNumbers bool) error {
 	// we always work solely with partition UUIDs internally, so convert any other identifiers to UUIDs
 	// see if a disk was specified
@@ -75,6 +89,12 @@ func Run(disk string, shrinkPartition *PartitionIdentifier, growPartitions []Par
 	if dryRun {
 		log.Printf("Dry run specified, not performing resizes %+v", resizes)
 		return nil
+	}
+	// integrity-check the source filesystems before anything destructive, so a
+	// corrupt source aborts the resize rather than being shrunk in place or
+	// copied into a new partition
+	if err := checkSourceFilesystems(d, resizes, fixErrors); err != nil {
+		return err
 	}
 	log.Printf("Will perform resizes %+v", resizes)
 	return resize(d, resizes, fixErrors, preserveNumbers)

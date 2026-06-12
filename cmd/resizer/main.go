@@ -83,7 +83,7 @@ var rootCmd = func() *cobra.Command {
 	cmd.Flags().StringVar(&shrinkPartition, "shrink-partition", "", "Partition to shrink to make space, if necessary")
 	cmd.Flags().StringSliceVar(&growPartitions, "grow-partition", []string{}, "Partitions to grow, along with their desired sizes, in format identifier:partition:size, see help (e.g. name:sda1:20G or label:EFI System:100M)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "If set, will only simulate the resize operations without making any changes")
-	cmd.Flags().BoolVar(&fixErrors, "fix-errors", false, "If set, will attempt to fix any ext4 filesystem errors found during fsck before shrinking")
+	cmd.Flags().BoolVar(&fixErrors, "fix-errors", false, "If set, repair filesystem errors found while checking the source filesystems (ext4 via e2fsck -y, FAT32 via fsck.fat -a) instead of aborting on an inconsistent source")
 	cmd.Flags().BoolVar(&preserveNumbers, "preserve-numbers", false, "If set, a grown partition that is relocated is renumbered back to its original partition number, so labels keep their original partition numbers (e.g. /dev/sda2)")
 	return cmd
 }

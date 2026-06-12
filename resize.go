@@ -422,6 +422,55 @@ func swapPartitions(d *disk.Disk, resizes []partitionResizeTarget) error {
 	return nil
 }
 
+// checkSourceFilesystems integrity-checks every source filesystem the resize
+// will read or modify, before any destructive step runs. ext4 sources are
+// checked with e2fsck and fat32 sources with fsck.fat; by default the checks
+// are read-only and an inconsistent filesystem aborts the resize, while
+// fixErrors upgrades them to repair. squashfs and other types have no
+// applicable checker and are copied as-is, so a corrupt squashfs source is
+// reproduced faithfully. This makes the integrity guarantee symmetric across
+// the shrink source and the grow sources, rather than only checking the shrink
+// partition that resize2fs would have checked anyway.
+func checkSourceFilesystems(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error {
+	device := d.Backend.Path()
+	if device == "" {
+		return fmt.Errorf("cannot check source filesystems: disk backend has no path")
+	}
+	checked := map[int]bool{}
+	for _, r := range resizes {
+		if checked[r.original.number] {
+			continue
+		}
+		checked[r.original.number] = true
+		fs, err := d.GetFilesystem(r.original.number)
+		if err != nil {
+			if isUnknownFilesystem(err) {
+				// no recognized filesystem (e.g. squashfs on a 512-byte
+				// sector disk, or raw data) -- nothing we can check
+				log.Printf("partition %d: no recognized filesystem, skipping integrity check", r.original.number)
+				continue
+			}
+			return fmt.Errorf("failed to get filesystem for source partition %d: %w", r.original.number, err)
+		}
+		var fsck func(string, bool) error
+		switch fs.Type() {
+		case filesystem.TypeExt4:
+			fsck = execE2fsck
+		case filesystem.TypeFat32:
+			fsck = execFsckFat
+		default:
+			// squashfs and other types have no applicable integrity check
+			log.Printf("partition %d: filesystem type %v has no integrity check, skipping", r.original.number, fs.Type())
+			continue
+		}
+		log.Printf("checking source filesystem on partition %d (%v)", r.original.number, fs.Type())
+		if err := checkFilesystem(device, r.original, fsck, fixErrors); err != nil {
+			return fmt.Errorf("integrity check failed for source partition %d: %w", r.original.number, err)
+		}
+	}
+	return nil
+}
+
 func shrinkFilesystems(d *disk.Disk, resizes []partitionResizeTarget, fixErrors bool) error {
 	for _, r := range resizes {
 		if r.original.size <= r.target.size {

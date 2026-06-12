@@ -1,8 +1,10 @@
 package partitionresizer
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -18,27 +20,59 @@ const (
 	partTmpFilename = "partresizer-shrinkfs-XXXXXXXX"
 )
 
-// execResize2fs is the function used to invoke resize2fs. partDevice may be a block device pointing to the actual
-// filesystem partition, or an image file with the filesystem at byte 0.
-var execResize2fs = func(partDevice string, newSizeMB int64, fixErrors bool) error {
+// runTool runs an external filesystem tool, streaming its output live to the
+// process's stdout/stderr while also capturing stderr. On a non-zero exit the
+// returned error wraps the exit status and includes the tool's own stderr
+// diagnostic, so a programmatic caller gets the reason for the failure rather
+// than a bare "exit status N".
+func runTool(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	var stderr bytes.Buffer
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			const max = 2000
+			if len(msg) > max {
+				msg = "..." + msg[len(msg)-max:]
+			}
+			return fmt.Errorf("%s failed: %w\n%s", name, err, msg)
+		}
+		return fmt.Errorf("%s failed: %w", name, err)
+	}
+	return nil
+}
+
+// execE2fsck runs a forced e2fsck on the given device or image file. By default
+// it is read-only (-n) and returns an error if the filesystem is inconsistent;
+// with fixErrors it repairs in place (-y).
+var execE2fsck = func(partDevice string, fixErrors bool) error {
 	fixFlag := "-n"
 	if fixErrors {
 		fixFlag = "-y"
 	}
-	cmd := exec.Command("e2fsck", "-f", fixFlag, partDevice)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("e2fsck failed: %w", err)
-	}
+	return runTool("e2fsck", "-f", fixFlag, partDevice)
+}
 
-	cmd = exec.Command("resize2fs", partDevice, fmt.Sprintf("%dM", newSizeMB))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("resize2fs failed: %w", err)
+// execFsckFat runs fsck.fat on the given device or image file. By default it is
+// read-only (-n) and returns an error if the filesystem is inconsistent; with
+// fixErrors it auto-repairs (-a).
+var execFsckFat = func(partDevice string, fixErrors bool) error {
+	fixFlag := "-n"
+	if fixErrors {
+		fixFlag = "-a"
 	}
-	return nil
+	return runTool("fsck.fat", fixFlag, partDevice)
+}
+
+// execResize2fs is the function used to invoke resize2fs. partDevice may be a block device pointing to the actual
+// filesystem partition, or an image file with the filesystem at byte 0. resize2fs requires a clean filesystem, so
+// e2fsck is always run first.
+var execResize2fs = func(partDevice string, newSizeMB int64, fixErrors bool) error {
+	if err := execE2fsck(partDevice, fixErrors); err != nil {
+		return err
+	}
+	return runTool("resize2fs", partDevice, fmt.Sprintf("%dM", newSizeMB))
 }
 
 // resizeFilesystem resizes an ext4 filesystem, given a full path to the device and partition data
@@ -100,6 +134,57 @@ func resizeFilesystem(
 		err = fmt.Errorf("unknown device type for %s", device)
 	}
 	return err
+}
+
+// checkFilesystem runs the given filesystem checker (e.g. execE2fsck,
+// execFsckFat) against the filesystem in the given partition. device is the
+// whole-disk device or image file; fsData describes the partition. The caller
+// selects fsck based on filesystem type; checkFilesystem only handles locating
+// the filesystem on the disk. The check is read-only unless fixErrors is set.
+// It mirrors resizeFilesystem's block-device-vs-image dispatch: for a block
+// device the partition's device node is checked directly; for an image file the
+// partition byte-range is extracted to a temp file, checked, and -- only when
+// repairing -- copied back.
+func checkFilesystem(device string, fsData partitionData, fsck func(string, bool) error, fixErrors bool) error {
+	f, err := os.Open(device)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	deviceType, err := disk.DetermineDeviceType(f)
+	if err != nil {
+		return err
+	}
+	switch deviceType {
+	case disk.DeviceTypeBlockDevice:
+		partDevice, err := partitionDevicePath(device, fsData.number, "")
+		if err != nil {
+			return fmt.Errorf("cannot find partition device for %s partition %d: %w", device, fsData.number, err)
+		}
+		return fsck(partDevice, fixErrors)
+	case disk.DeviceTypeFile:
+		tmpFile, err := os.CreateTemp("", partTmpFilename)
+		if err != nil {
+			return err
+		}
+		_ = tmpFile.Close()
+		defer func() { _ = os.RemoveAll(tmpFile.Name()) }()
+		if err := CopyRange(device, tmpFile.Name(), fsData.start, 0, fsData.size, 0); err != nil {
+			return fmt.Errorf("copy to temp file: %w", err)
+		}
+		if err := fsck(tmpFile.Name(), fixErrors); err != nil {
+			return err
+		}
+		// Only a repairing run mutates the filesystem; persist it back into
+		// the image. A read-only check leaves the source untouched.
+		if fixErrors {
+			return CopyRange(tmpFile.Name(), device, 0, fsData.start, fsData.size, 0)
+		}
+		return nil
+	case disk.DeviceTypeUnknown:
+		return fmt.Errorf("unknown device type for %s", device)
+	}
+	return nil
 }
 
 // planResizes computes the resize plan, including both growing the relevant partitions as well as
