@@ -63,11 +63,14 @@ func Run(disk string, shrinkPartition *PartitionIdentifier, growPartitions []Par
 
 	// now we have the desired disk, either passed explicitly or found by discovery
 
-	backend, err := file.OpenFromPath(disk, false)
+	backendFile, err := file.OpenFromPath(disk, false)
 	if err != nil {
 		return err
 	}
-	d, err := diskfs.OpenBackend(backend)
+	// maybeWrapBackend is a no-op in normal builds; in -tags chaos builds it can
+	// inject delays around GPT-sector writes (see RESIZER_GPT_WRITE_DELAY) so
+	// crash-injection tests can land between the backup/primary GPT writes.
+	d, err := diskfs.OpenBackend(maybeWrapBackend(backendFile))
 	if err != nil {
 		return err
 	}
