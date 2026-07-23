@@ -26,16 +26,16 @@ const (
 // runResizeStepsUpTo replays resize()'s pipeline against a freshly planned
 // resizes slice, stopping after the step given by stopAfter. It simulates the
 // process being interrupted immediately after that step has persisted its
-// changes, so that a subsequent Run() must resume from a partially-modified
-// disk. The plan is computed exactly as Run() does, from the current on-disk
+// changes, so that a subsequent Apply() must resume from a partially-modified
+// disk. The plan is computed exactly as Apply() does, from the current on-disk
 // state.
-func runResizeStepsUpTo(t *testing.T, path string, shrink PartitionIdentifier, grow []PartitionChange, preserveNumbers bool, stopAfter int, formatTargetsNoCopy, writeExtraFile bool) {
+func runResizeStepsUpTo(t *testing.T, path string, desired []PartitionSpec, shrink *ShrinkSpec, stopAfter int, formatTargetsNoCopy, writeExtraFile bool) {
 	t.Helper()
 	backend, err := file.OpenFromPath(path, false)
 	if err != nil {
 		t.Fatalf("open backend: %v", err)
 	}
-	// close (flush) the partial handle before Run() reopens the path
+	// close (flush) the partial handle before Apply() reopens the path
 	defer func() { _ = backend.Close() }()
 
 	d, err := diskfs.OpenBackend(backend)
@@ -50,15 +50,9 @@ func runResizeStepsUpTo(t *testing.T, path string, shrink PartitionIdentifier, g
 	if !ok {
 		t.Fatalf("expected GPT table")
 	}
-	// for an image file, findDisks keys partition data by the file's basename
-	disks, err := findDisks(path, "")
+	resizes, err := planApply(d, table, desired, shrink)
 	if err != nil {
-		t.Fatalf("findDisks: %v", err)
-	}
-	parts := disks[filepath.Base(path)]
-	resizes, err := planResizes(d, table, parts, grow, &shrink)
-	if err != nil {
-		t.Fatalf("planResizes: %v", err)
+		t.Fatalf("planApply: %v", err)
 	}
 
 	steps := []struct {
@@ -69,7 +63,7 @@ func runResizeStepsUpTo(t *testing.T, path string, shrink PartitionIdentifier, g
 		{"shrinkPartitions", func() error { return shrinkPartitions(d, resizes) }},
 		{"createPartitions", func() error { return createPartitions(d, resizes) }},
 		{"copyFilesystems", func() error { return copyFilesystems(d, resizes) }},
-		{"updatePartitions", func() error { return updatePartitions(d, resizes, preserveNumbers) }},
+		{"updatePartitions", func() error { return updatePartitions(d, resizes, true) }},
 	}
 	for i := 0; i < stopAfter && i < len(steps); i++ {
 		if err := steps[i].fn(); err != nil {
@@ -133,11 +127,10 @@ func TestRunResumeAfterInterruption(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow end-to-end resize test (real shrink/copy of a multi-GB fixture)")
 	}
-	shrink := NewPartitionIdentifier(IdentifierByLabel, "shrinker")
-	grow := []PartitionChange{
-		NewPartitionChange(IdentifierByLabel, "parta", 2*GB),
-		NewPartitionChange(IdentifierByLabel, "partb", 2*GB),
-		NewPartitionChange(IdentifierByLabel, "ESP", 1*GB),
+	grow := []PartitionSpec{
+		growByLabel("parta", 2*GB),
+		growByLabel("partb", 2*GB),
+		growByLabel("ESP", 1*GB),
 	}
 
 	cases := []struct {
@@ -180,37 +173,31 @@ func TestRunResumeAfterInterruption(t *testing.T) {
 		{
 			// the whole resize completed, then the tool was re-run: the
 			// idempotent updatePartitions plus the "already at target size"
-			// short-circuit in planResizes must make this a no-op.
+			// short-circuit in planApply must make this a no-op.
 			name:      "afterUpdatePartitions",
 			stopAfter: stepUpdatePartitions,
 		},
 	}
 
-	for _, preserveNumbers := range []bool{false, true} {
-		mode := "renumber"
-		if preserveNumbers {
-			mode = "preserveNumbers"
-		}
-		for _, tc := range cases {
-			t.Run(mode+"/"+tc.name, func(t *testing.T) {
-				tmpDir := t.TempDir()
-				tmpFile := filepath.Join(tmpDir, "diskfull.img")
-				if err := testCopyFile(diskfullImg, tmpFile); err != nil {
-					t.Fatalf("failed to copy disk image: %v", err)
-				}
-				origShrinkSize, origNumber := readOriginalLayout(t, tmpFile)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			tmpFile := filepath.Join(tmpDir, "diskfull.img")
+			if err := testCopyFile(diskfullImg, tmpFile); err != nil {
+				t.Fatalf("failed to copy disk image: %v", err)
+			}
+			origShrinkSize, origNumber := readOriginalLayout(t, tmpFile)
 
-				// simulate a crash partway through the resize
-				runResizeStepsUpTo(t, tmpFile, shrink, grow, preserveNumbers, tc.stopAfter, tc.formatTargetsNoCopy, tc.writeExtraFile)
+			// simulate a crash partway through the resize
+			runResizeStepsUpTo(t, tmpFile, grow, shrinkToFitLabel("shrinker"), tc.stopAfter, tc.formatTargetsNoCopy, tc.writeExtraFile)
 
-				// resume: a fresh Run() must finish the resize correctly
-				if err := Run(tmpFile, &shrink, grow, false, false, preserveNumbers); err != nil {
-					t.Fatalf("resume Run failed: %v", err)
-				}
+			// resume: a fresh Apply() must finish the resize correctly
+			if err := Apply(tmpFile, grow, shrinkToFitLabel("shrinker"), false, false); err != nil {
+				t.Fatalf("resume Apply failed: %v", err)
+			}
 
-				assertResizedLayout(t, tmpFile, origShrinkSize, origNumber, preserveNumbers)
-			})
-		}
+			assertResizedLayout(t, tmpFile, origShrinkSize, origNumber)
+		})
 	}
 }
 
@@ -250,10 +237,10 @@ func readOriginalLayout(t *testing.T, path string) (shrinkSize int64, numbers ma
 
 // assertResizedLayout checks that the disk reflects a completed resize:
 // shrinker shrunk by the total grow, the three grown partitions at their
-// requested sizes, ESP still FAT32, and (when preserveNumbers) every partition
-// keeping its original number. This is the same end state asserted by
-// TestRun's uninterrupted path.
-func assertResizedLayout(t *testing.T, path string, origShrinkSize int64, origNumber map[string]int, preserveNumbers bool) {
+// requested sizes, ESP still FAT32, and every partition keeping its original
+// number. This is the same end state asserted by TestApplyResize's
+// uninterrupted path.
+func assertResizedLayout(t *testing.T, path string, origShrinkSize int64, origNumber map[string]int) {
 	t.Helper()
 	backend, err := file.OpenFromPath(path, true)
 	if err != nil {
@@ -309,8 +296,8 @@ func assertResizedLayout(t *testing.T, path string, origShrinkSize int64, origNu
 		default:
 			t.Errorf("unexpected active partition %q", name)
 		}
-		if preserveNumbers && int(p.Index) != origNumber[name] {
-			t.Errorf("%s number = %d, want %d (preserveNumbers)", name, p.Index, origNumber[name])
+		if int(p.Index) != origNumber[name] {
+			t.Errorf("%s number = %d, want %d (preserved)", name, p.Index, origNumber[name])
 		}
 		seen[name] = true
 	}
@@ -344,20 +331,19 @@ func TestRunAbortsOnFsckFailure(t *testing.T) {
 	// inode tables/bitmaps.
 	corruptRegion(t, tmpFile, shrinkStart+2*1024*1024, 4*1024*1024)
 
-	shrink := NewPartitionIdentifier(IdentifierByLabel, "shrinker")
-	grow := []PartitionChange{
-		NewPartitionChange(IdentifierByLabel, "parta", 2*GB),
-		NewPartitionChange(IdentifierByLabel, "partb", 2*GB),
-		NewPartitionChange(IdentifierByLabel, "ESP", 1*GB),
+	grow := []PartitionSpec{
+		growByLabel("parta", 2*GB),
+		growByLabel("partb", 2*GB),
+		growByLabel("ESP", 1*GB),
 	}
 
 	// fixErrors=false: e2fsck -n must refuse the corrupt fs and the resize must
 	// abort before touching the partition layout.
-	err := Run(tmpFile, &shrink, grow, false, false, false)
+	err := Apply(tmpFile, grow, shrinkToFitLabel("shrinker"), false, false)
 	if err == nil {
-		t.Fatal("expected Run to fail on a corrupt shrink filesystem, got nil")
+		t.Fatal("expected Apply to fail on a corrupt shrink filesystem, got nil")
 	}
-	t.Logf("Run correctly aborted on corrupt shrink filesystem: %v", err)
+	t.Logf("Apply correctly aborted on corrupt shrink filesystem: %v", err)
 }
 
 // partitionStartByLabel returns the byte offset of the named GPT partition.

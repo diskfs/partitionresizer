@@ -141,7 +141,7 @@ func TestFindDisks(t *testing.T) {
 			t.Errorf("(start,size) = (%d,%d), want (%d,%d)",
 				pd.start, pd.size, 2*512, 4*512)
 		}
-		expectedEnd := int64((2+4-1) * 512)
+		expectedEnd := int64((2 + 4 - 1) * 512)
 		if pd.end != expectedEnd {
 			t.Errorf("pd.end = %d, want %d", pd.end, expectedEnd)
 		}

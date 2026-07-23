@@ -11,23 +11,12 @@ import (
 	"github.com/diskfs/go-diskfs/partition/gpt"
 )
 
-const (
-	diskfullImg = "testdata/dist/diskfull.img"
-)
-
-func TestRun(t *testing.T) {
-	for _, preserveNumbers := range []bool{false, true} {
-		name := "renumber"
-		if preserveNumbers {
-			name = "preserveNumbers"
-		}
-		t.Run(name, func(t *testing.T) {
-			runResizeTest(t, preserveNumbers)
-		})
-	}
-}
-
-func runResizeTest(t *testing.T, preserveNumbers bool) {
+// TestApplyResize drives a full grow+shrink-to-fit Apply on the diskfull fixture:
+// grow parta/partb to 2 GB and ESP to 1 GB, shrinking "shrinker" only as much as
+// needed to make room. It asserts the resulting sizes, that ESP keeps a FAT32
+// filesystem, and that every partition keeps its original number (Apply always
+// preserves numbers).
+func TestApplyResize(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "diskfull.img")
 	if err := testCopyFile(diskfullImg, tmpFile); err != nil {
@@ -63,30 +52,30 @@ func runResizeTest(t *testing.T, preserveNumbers bool) {
 	if origShrinkSize == 0 {
 		t.Fatal("could not find shrinker partition in original disk")
 	}
+	_ = f0.Close()
 
-	shrink := NewPartitionIdentifier(IdentifierByLabel, "shrinker")
-	growList := []PartitionChange{
-		NewPartitionChange(IdentifierByLabel, "parta", 2*GB),
-		NewPartitionChange(IdentifierByLabel, "partb", 2*GB),
-		NewPartitionChange(IdentifierByLabel, "ESP", 1*GB),
+	desired := []PartitionSpec{
+		growByLabel("parta", 2*GB),
+		growByLabel("partb", 2*GB),
+		growByLabel("ESP", 1*GB),
 	}
-	if err := Run(tmpFile, &shrink, growList, false, false, preserveNumbers); err != nil {
-		t.Fatalf("Run failed: %v", err)
+	if err := Apply(tmpFile, desired, shrinkToFitLabel("shrinker"), false, false); err != nil {
+		t.Fatalf("Apply failed: %v", err)
 	}
 
 	f1, err := os.Open(tmpFile)
 	if err != nil {
-		t.Fatalf("failed to open disk image after Run: %v", err)
+		t.Fatalf("failed to open disk image after Apply: %v", err)
 	}
 	defer func() { _ = f1.Close() }()
 	backend1 := file.New(f1, true)
 	d1, err := diskfs.OpenBackend(backend1)
 	if err != nil {
-		t.Fatalf("failed to open disk after Run: %v", err)
+		t.Fatalf("failed to open disk after Apply: %v", err)
 	}
 	tableRaw1, err := d1.GetPartitionTable()
 	if err != nil {
-		t.Fatalf("failed to get partition table after Run: %v", err)
+		t.Fatalf("failed to get partition table after Apply: %v", err)
 	}
 	table1 := tableRaw1.(*gpt.Table)
 
@@ -130,10 +119,9 @@ func runResizeTest(t *testing.T, preserveNumbers bool) {
 		default:
 			t.Errorf("unexpected active partition %q", name)
 		}
-		// with preserveNumbers, every partition (including the relocated grown ones)
-		// must keep the number it had before the resize
-		if preserveNumbers && int(p.Index) != origNumber[name] {
-			t.Errorf("%s partition number = %d, want %d (preserveNumbers)", name, p.Index, origNumber[name])
+		// Apply preserves numbers: every partition keeps the number it had before.
+		if int(p.Index) != origNumber[name] {
+			t.Errorf("%s partition number = %d, want %d", name, p.Index, origNumber[name])
 		}
 		seen[name] = true
 	}

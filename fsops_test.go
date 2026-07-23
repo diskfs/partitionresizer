@@ -8,27 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/diskfs/go-diskfs/disk"
-	"github.com/diskfs/go-diskfs/partition/gpt"
 )
-
-const (
-	testSectorSize = 512
-)
-
-// makeTable constructs a GPT table with partitions of given sizes (bytes).
-// Assumes sectorSize of 512 bytes.
-func makeTable(sizes ...int64) *gpt.Table {
-	parts := make([]*gpt.Partition, len(sizes))
-	var start int64 = 1
-	for i, sz := range sizes {
-		blocks := sz / testSectorSize
-		parts[i] = &gpt.Partition{Index: i + 1, Start: uint64(start), Size: uint64(sz), End: uint64(start + blocks - 1)}
-		start += blocks
-	}
-	return &gpt.Table{Partitions: parts}
-}
 
 // TestShrinkFilesystem verifies that an error from execResize2fs is wrapped correctly.
 func TestShrinkFilesystem(t *testing.T) {
@@ -109,90 +89,6 @@ func TestShrinkFilesystem(t *testing.T) {
 		if calledMB != wantMB {
 			t.Errorf("newSizeMB = %d, want %d", calledMB, wantMB)
 		}
-	})
-}
-
-// makeDiskPartitionData produces partitionData entries matching table partitions.
-func makeDiskPartitionData(names []string, table *gpt.Table) []partitionData {
-	var data []partitionData
-	for i, p := range table.Partitions {
-		data = append(data, partitionData{
-			name:   names[i],
-			label:  names[i],
-			size:   int64(p.Size),
-			start:  int64(p.Start),
-			end:    int64(p.Start + p.Size - 1),
-			number: i + 1,
-		})
-	}
-	return data
-}
-
-func TestPlanResizes(t *testing.T) {
-	t.Run("open space", func(t *testing.T) {
-		table := makeTable(5 * GB)
-		diskData := makeDiskPartitionData([]string{"p1"}, table)
-		d := &disk.Disk{Size: 10 * GB}
-		resizes, err := planResizes(
-			d,
-			table,
-			diskData,
-			[]PartitionChange{NewPartitionChange(IdentifierByName, "p1", 3*GB)},
-			nil,
-		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(resizes) != 1 {
-			t.Fatalf("expected 1 resize, got %d", len(resizes))
-		}
-		if resizes[0].target.size != 3*GB {
-			t.Errorf("target.size = %d, want %d", resizes[0].target.size, 3*GB)
-		}
-		// should check that it did not shrink
-	})
-	t.Run("with shrink", func(t *testing.T) {
-		t.Run("no partition space available", func(t *testing.T) {
-			table := makeTable(5 * GB)
-			diskData := makeDiskPartitionData([]string{"p1"}, table)
-			d := &disk.Disk{Size: 5 * GB}
-			_, err := planResizes(
-				d,
-				table,
-				diskData,
-				[]PartitionChange{NewPartitionChange(IdentifierByName, "p1", 8*GB)},
-				nil,
-			)
-			if err == nil {
-				t.Fatal("expected error due to insufficient space and no shrinkPartition, got nil")
-			}
-		})
-		t.Run("with partition space available", func(t *testing.T) {
-			table := makeTable(1*GB, 20*GB)
-			diskData := makeDiskPartitionData([]string{"p1", "p2"}, table)
-			d := &disk.Disk{Size: 21 * GB}
-			shrink := NewPartitionIdentifier(IdentifierByName, "p2")
-			resizes, err := planResizes(
-				d,
-				table,
-				diskData,
-				[]PartitionChange{NewPartitionChange(IdentifierByName, "p1", 5*GB)},
-				&shrink,
-			)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			// partition entry size should now be 20GB-5GB = 15GB
-			if len(resizes) != 2 {
-				t.Fatalf("expected 2 resizes, got %d", len(resizes))
-			}
-			if resizes[0].target.size != 15*GB {
-				t.Errorf("target %d size = %d, want %d", resizes[0].target.number, resizes[0].target.size, 15*GB)
-			}
-			if resizes[1].target.size != 5*GB {
-				t.Errorf("target %d size = %d, want %d", resizes[1].target.number, resizes[1].target.size, 5*GB)
-			}
-		})
 	})
 }
 

@@ -46,7 +46,7 @@ func TestUntouchedPartitionsByteIntegrity(t *testing.T) {
 		t.Skip("slow end-to-end resize test")
 	}
 	fx := buildSampleLayout(t)
-	if err := Run(fx.path, nil, shrinkP3, false, false, false); err != nil {
+	if err := Apply(fx.path, nil, shrinkP3, false, false); err != nil {
 		t.Fatalf("Case 1 (shrink P3): %v", err)
 	}
 	p3Len := int((defaultP3MB - 600) * MB)
@@ -54,7 +54,7 @@ func TestUntouchedPartitionsByteIntegrity(t *testing.T) {
 	p3Before := partitionRegionSum(t, fx.path, fx.p3Start, p3Len)
 	cfgBefore := partitionRegionSum(t, fx.path, fx.configStart, cfgLen)
 
-	if err := Run(fx.path, nil, growImages, false, false, true); err != nil {
+	if err := Apply(fx.path, growImages, nil, false, false); err != nil {
 		t.Fatalf("Case 2 (grow): %v", err)
 	}
 
@@ -82,7 +82,7 @@ func TestInsufficientSpaceIsAtomic(t *testing.T) {
 	before := wholeDiskSum(t, fx.path)
 
 	// full disk, grows that need ~496 MB, no shrink partition supplied
-	err := Run(fx.path, nil, growImages, false, false, true)
+	err := Apply(fx.path, growImages, nil, false, false)
 	if err == nil {
 		t.Fatal("expected an insufficient-space error, got nil")
 	}
@@ -105,7 +105,7 @@ func TestShrinkBelowUsedAborts(t *testing.T) {
 	p3Before := partitionRegionSum(t, fx.path, fx.p3Start, int(defaultP3MB*MB))
 
 	// 16 MB is well below P3's used size; resize2fs must refuse
-	err := Run(fx.path, nil, []PartitionChange{NewPartitionChange(IdentifierByLabel, "P3", 16*MB)}, false, false, false)
+	err := Apply(fx.path, nil, shrinkToSizeLabel("P3", 16*MB), false, false)
 	if err == nil {
 		t.Fatal("expected resize2fs to refuse shrinking below used size, got nil")
 	}
@@ -136,9 +136,8 @@ func TestCombinedShrinkGrow(t *testing.T) {
 	const diskMB = p3MB + 252 // front partitions (~250 MB) + margin
 	fx := buildSampleLayoutSized(t, diskMB, p3MB)
 
-	shrink := NewPartitionIdentifier(IdentifierByLabel, "P3")
-	if err := Run(fx.path, &shrink, growImages, false, false, true); err != nil {
-		t.Fatalf("combined shrink+grow Run: %v", err)
+	if err := Apply(fx.path, growImages, shrinkToFitLabel("P3"), false, false); err != nil {
+		t.Fatalf("combined shrink+grow Apply: %v", err)
 	}
 
 	after := gptByName(t, fx.path)
@@ -173,7 +172,7 @@ func TestShrinkPreservesP3Content(t *testing.T) {
 	want := populateP3(t, fx.path, 30)
 
 	// shrink P3 from 900 MB to 200 MB (above used; forces block relocation)
-	if err := Run(fx.path, nil, []PartitionChange{NewPartitionChange(IdentifierByLabel, "P3", 200*MB)}, false, false, false); err != nil {
+	if err := Apply(fx.path, nil, shrinkToSizeLabel("P3", 200*MB), false, false); err != nil {
 		t.Fatalf("shrink P3: %v", err)
 	}
 	after := gptByName(t, fx.path)
@@ -274,12 +273,11 @@ func TestChaosKill(t *testing.T) {
 	cfgLen := int(configMB * MB)
 	cfgSum := partitionRegionSum(t, base.path, base.configStart, cfgLen)
 
-	shrinkArgs := []string{"--grow-partition", "label:P3:300M"} // Case 1: shrink P3 in place
-	growArgs := []string{                                       // Case 2: grow into the freed space
-		"--preserve-numbers",
-		"--grow-partition", "label:EFI System:96M",
-		"--grow-partition", "label:IMGA:200M",
-		"--grow-partition", "label:IMGB:200M",
+	shrinkArgs := []string{"--shrink", "label:P3:300M"} // Case 1: shrink P3 in place
+	growArgs := []string{                               // Case 2: grow into the freed space
+		"--partition", "match=label:EFI System,minsize=96M",
+		"--partition", "match=label:IMGA,minsize=200M",
+		"--partition", "match=label:IMGB,minsize=200M",
 	}
 	// Seed from CHAOS_SEED if set (so a failing run is reproducible), else from
 	// the clock so repeated runs explore different kill timings.
@@ -403,8 +401,10 @@ func runPhaseWithRandomKills(t *testing.T, bin, scratch string, args []string, r
 			if os.Getenv("CHAOS_COPY_STATE") != "" {
 				t.Logf("KILL_STEP=%s %s", step, copyDestState(diskPath))
 			}
-			// drop any partial resize2fs temp the killed run left behind
-			if matches, _ := filepath.Glob(filepath.Join(scratch, "partresizer-shrinkfs-*")); matches != nil {
+			// drop any partial resize2fs temp / create-filesystem temp the killed
+			// run left behind
+			for _, pat := range []string{"partresizer-shrinkfs-*", "createfs*"} {
+				matches, _ := filepath.Glob(filepath.Join(scratch, pat))
 				for _, m := range matches {
 					_ = os.RemoveAll(m)
 				}

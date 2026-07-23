@@ -14,10 +14,8 @@ import (
 )
 
 // TestGrowOnlyDoesNotPanic builds the resizer and runs a grow-only invocation
-// (no --shrink-partition) against a minimal GPT image. Before the fix, main
-// passed Run a non-nil pointer to a nil PartitionIdentifier, which made
-// filterDisksByPartitions nil-dereference and the process panic (exit 2). After
-// the fix it must fail gracefully (here: insufficient space), never panic.
+// (no --shrink) against a minimal GPT image where the grow cannot fit. It must
+// fail gracefully (insufficient space, exit 1), never panic (exit 2).
 func TestGrowOnlyDoesNotPanic(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "resizer")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
@@ -25,7 +23,7 @@ func TestGrowOnlyDoesNotPanic(t *testing.T) {
 	}
 	img := makeMinimalGPTImage(t)
 
-	cmd := exec.Command(bin, "--grow-partition", "label:data:1G", img)
+	cmd := exec.Command(bin, "--partition", "match=label:data,minsize=1G", img)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()

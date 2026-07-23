@@ -267,8 +267,7 @@ func TestSampleLayoutSmoke(t *testing.T) {
 	t.Logf("fixture filesystems:\n%s", report)
 
 	// Case 1: shrink P3 by 600 MB (free space at the end of the disk)
-	p3Shrink := []PartitionChange{NewPartitionChange(IdentifierByLabel, "P3", (defaultP3MB-600)*MB)}
-	if err := Run(fx.path, nil, p3Shrink, false, false, false); err != nil {
+	if err := Apply(fx.path, nil, shrinkToSizeLabel("P3", (defaultP3MB-600)*MB), false, false); err != nil {
 		t.Fatalf("Case 1 (shrink P3) failed: %v", err)
 	}
 	after1 := gptByName(t, fx.path)
@@ -276,14 +275,14 @@ func TestSampleLayoutSmoke(t *testing.T) {
 		t.Errorf("after Case 1: P3 size = %d, want %d", got, (defaultP3MB-600)*MB)
 	}
 
-	// Case 2: grow ESP/IMGA/IMGB into the freed space; preserveNumbers keeps
-	// their original indices/labels via updatePartitions
-	grow := []PartitionChange{
-		NewPartitionChange(IdentifierByLabel, "EFI System", 96*MB),
-		NewPartitionChange(IdentifierByLabel, "IMGA", 200*MB),
-		NewPartitionChange(IdentifierByLabel, "IMGB", 200*MB),
+	// Case 2: grow ESP/IMGA/IMGB into the freed space; Apply preserves their
+	// original indices/labels via updatePartitions
+	grow := []PartitionSpec{
+		growByLabel("EFI System", 96*MB),
+		growByLabel("IMGA", 200*MB),
+		growByLabel("IMGB", 200*MB),
 	}
-	if err := Run(fx.path, nil, grow, false, false, true); err != nil {
+	if err := Apply(fx.path, grow, nil, false, false); err != nil {
 		t.Fatalf("Case 2 (grow + updatePartitions) failed: %v", err)
 	}
 
@@ -365,24 +364,16 @@ func readPartitionFile(t *testing.T, path string, partIndex int, name string) st
 	return string(data)
 }
 
-// shrinkP3 is the Case 1 operation: shrink the P3 ext4 partition in place by
-// 600 MB, freeing space at the end of the disk. It is expressed as a
-// PartitionChange to a smaller size (calculateResizes treats target < original
-// as a shrink in place).
-var shrinkP3 = []PartitionChange{NewPartitionChange(IdentifierByLabel, "P3", (defaultP3MB-600)*MB)}
+// shrinkP3 is the Case 1 operation: shrink the P3 ext4 partition in place to
+// 600 MB smaller than its default, freeing space at the end of the disk.
+var shrinkP3 = shrinkToSizeLabel("P3", (defaultP3MB-600)*MB)
 
 // growImages is the Case 2 operation: grow ESP/IMGA/IMGB into the freed space.
-var growImages = []PartitionChange{
-	NewPartitionChange(IdentifierByLabel, "EFI System", 96*MB),
-	NewPartitionChange(IdentifierByLabel, "IMGA", 200*MB),
-	NewPartitionChange(IdentifierByLabel, "IMGB", 200*MB),
+var growImages = []PartitionSpec{
+	growByLabel("EFI System", 96*MB),
+	growByLabel("IMGA", 200*MB),
+	growByLabel("IMGB", 200*MB),
 }
-
-// dummyShrink is an unused shrink identifier required by runResizeStepsUpTo's
-// signature; both cases drive their shrink/grow entirely through the grow
-// list (P3-in-place for Case 1, free-space grows for Case 2), so planResizes
-// never consults shrinkPartition.
-func dummyShrink() PartitionIdentifier { return NewPartitionIdentifier(IdentifierByLabel, "P3") }
 
 // TestRunResumeShrink is Case 1 through the interrupt/resume harness: on the
 // scaled sample layout, interrupt the in-place P3 shrink after each step, re-run to
@@ -396,9 +387,9 @@ func TestRunResumeShrink(t *testing.T) {
 	for _, stopAfter := range []int{stepShrinkFilesystems, stepShrinkPartitions, stepUpdatePartitions} {
 		t.Run(fmt.Sprintf("stopAfter=%d", stopAfter), func(t *testing.T) {
 			fx := buildSampleLayout(t)
-			runResizeStepsUpTo(t, fx.path, dummyShrink(), shrinkP3, false, stopAfter, false, false)
-			if err := Run(fx.path, nil, shrinkP3, false, false, false); err != nil {
-				t.Fatalf("resume Run failed: %v", err)
+			runResizeStepsUpTo(t, fx.path, nil, shrinkP3, stopAfter, false, false)
+			if err := Apply(fx.path, nil, shrinkP3, false, false); err != nil {
+				t.Fatalf("resume Apply failed: %v", err)
 			}
 			after := gptByName(t, fx.path)
 			if got := int64(after["P3"].GetSize()); got != (defaultP3MB-600)*MB {
@@ -431,7 +422,7 @@ func TestRunResumeGrow(t *testing.T) {
 	}
 	// build the fixture and run Case 1 once to produce the post-shrink base disk
 	base := buildSampleLayout(t)
-	if err := Run(base.path, nil, shrinkP3, false, false, false); err != nil {
+	if err := Apply(base.path, nil, shrinkP3, false, false); err != nil {
 		t.Fatalf("Case 1 (shrink) setup failed: %v", err)
 	}
 
@@ -441,9 +432,9 @@ func TestRunResumeGrow(t *testing.T) {
 			if err := testCopyFile(base.path, diskCopy); err != nil {
 				t.Fatalf("copy base disk: %v", err)
 			}
-			runResizeStepsUpTo(t, diskCopy, dummyShrink(), growImages, true, stopAfter, false, false)
-			if err := Run(diskCopy, nil, growImages, false, false, true); err != nil {
-				t.Fatalf("resume Run failed: %v", err)
+			runResizeStepsUpTo(t, diskCopy, growImages, nil, stopAfter, false, false)
+			if err := Apply(diskCopy, growImages, nil, false, false); err != nil {
+				t.Fatalf("resume Apply failed: %v", err)
 			}
 
 			after := gptByName(t, diskCopy)
@@ -545,7 +536,7 @@ func TestLayoutStagesDump(t *testing.T) {
 	t.Logf("Stage 1 - initial layout (disk %d MB):\n%s", defaultDiskMB, gptDump(t, fx.path))
 
 	// Stage 2: Case 1 shrinks P3 in place, freeing space at the end
-	if err := Run(fx.path, nil, shrinkP3, false, false, false); err != nil {
+	if err := Apply(fx.path, nil, shrinkP3, false, false); err != nil {
 		t.Fatalf("Case 1 (shrink P3): %v", err)
 	}
 	t.Logf("Stage 2 - after P3 ext4 shrink (freed 600 MB at end):\n%s", gptDump(t, fx.path))
@@ -553,12 +544,12 @@ func TestLayoutStagesDump(t *testing.T) {
 	// Stage 3: Case 2 up to and including copyFilesystems -- the *_resized2
 	// partitions have been created in the freed space and filled, originals
 	// still present
-	runResizeStepsUpTo(t, fx.path, dummyShrink(), growImages, true, stepCopyFilesystems, false, false)
+	runResizeStepsUpTo(t, fx.path, growImages, nil, stepCopyFilesystems, false, false)
 	t.Logf("Stage 3 - ESP/IMGA/IMGB_resized2 created and content copied (pre-updatePartitions):\n%s", gptDump(t, fx.path))
 
 	// Stage 4: resume to completion -- the single updatePartitions relabels and
 	// reindexes the *_resized2 partitions to the originals and removes the old
-	if err := Run(fx.path, nil, growImages, false, false, true); err != nil {
+	if err := Apply(fx.path, growImages, nil, false, false); err != nil {
 		t.Fatalf("Case 2 resume to completion: %v", err)
 	}
 	t.Logf("Stage 4 - after updatePartitions (final):\n%s", gptDump(t, fx.path))

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"reflect"
 	"testing"
 
 	resizer "github.com/diskfs/partitionresizer"
@@ -16,6 +15,7 @@ func TestParsePartitionIdentifier_Valid(t *testing.T) {
 	}{
 		{"name:sda1", resizer.IdentifierByName, "sda1"},
 		{"label:EFI System", resizer.IdentifierByLabel, "EFI System"},
+		{"uuid:AD6871EE-31F9-4CF3-9E09-6F7A25C30056", resizer.IdentifierByUUID, "AD6871EE-31F9-4CF3-9E09-6F7A25C30056"},
 	}
 	for _, tt := range tests {
 		pi, err := parsePartitionIdentifier(tt.input)
@@ -34,7 +34,7 @@ func TestParsePartitionIdentifier_Valid(t *testing.T) {
 func TestParsePartitionIdentifier_Invalid(t *testing.T) {
 	inputs := []string{
 		"no-delimiter",
-		"uuid:1234",
+		"bogus:value", // unknown identifier type
 	}
 	for _, input := range inputs {
 		if _, err := parsePartitionIdentifier(input); err == nil {
@@ -78,43 +78,80 @@ func TestParseSize_Invalid(t *testing.T) {
 	}
 }
 
-// Valid partition change formats
-func TestParsePartitionChange_Valid(t *testing.T) {
-	input := "name:sda1:20M"
-	pc, err := parsePartitionChange(input)
-	if err != nil {
-		t.Fatalf("parsePartitionChange(%q) error: %v", input, err)
-	}
-	if pc.By() != resizer.IdentifierByName || pc.Value() != "sda1" {
-		t.Errorf("parsePartitionChange(%q) identifier = (%v,%q), want (name,sda1)", input, pc.By(), pc.Value())
-	}
-	if got := pc.Size(); got != 20*1024*1024 {
-		t.Errorf("parsePartitionChange(%q) size = %d, want %d", input, got, 20*1024*1024)
-	}
+// A create/GUID spec and a match (grow) spec both parse, and their fields land
+// where expected.
+func TestParsePartitionSpec_Valid(t *testing.T) {
+	t.Run("guid create", func(t *testing.T) {
+		spec, err := parsePartitionSpec("guid=AD..56,minsize=2G,label=EFI System,type=C12A,index=7,fs=fat32")
+		if err != nil {
+			t.Fatalf("parsePartitionSpec error: %v", err)
+		}
+		if spec.GUID != "AD..56" || spec.MinSize != 2*1024*1024*1024 {
+			t.Errorf("guid/minsize = (%q,%d)", spec.GUID, spec.MinSize)
+		}
+		if spec.Label != "EFI System" || spec.TypeGUID != "C12A" || spec.Index != 7 || spec.FS != resizer.FSFAT32 {
+			t.Errorf("unexpected spec %+v", spec)
+		}
+		if spec.Match != nil {
+			t.Errorf("Match should be nil for a guid spec, got %+v", spec.Match)
+		}
+	})
+	t.Run("match grow", func(t *testing.T) {
+		spec, err := parsePartitionSpec("match=label:Data,minsize=100G")
+		if err != nil {
+			t.Fatalf("parsePartitionSpec error: %v", err)
+		}
+		if spec.Match == nil || spec.Match.By() != resizer.IdentifierByLabel || spec.Match.Value() != "Data" {
+			t.Errorf("unexpected Match %+v", spec.Match)
+		}
+		if spec.MinSize != 100*1024*1024*1024 {
+			t.Errorf("minsize = %d", spec.MinSize)
+		}
+	})
 }
 
-// Invalid partition change formats
-func TestParsePartitionChange_Invalid(t *testing.T) {
-	inputs := []string{"badformat", "name:sda1", "name:sda1:XYZ"}
-	for _, input := range inputs {
-		if _, err := parsePartitionChange(input); err == nil {
-			t.Errorf("parsePartitionChange(%q) expected error, got nil", input)
+// Missing required fields and unknown keys are rejected.
+func TestParsePartitionSpec_Invalid(t *testing.T) {
+	inputs := []string{
+		"guid=AD..56",                   // no minsize
+		"minsize=2G",                    // neither guid nor match
+		"match=label:X,size=2G",         // unknown key size (want minsize)
+		"guid=AD..56,minsize=2G,fs=zfs", // unknown fs
+		"noequals",                      // not key=value
+	}
+	for _, in := range inputs {
+		if _, err := parsePartitionSpec(in); err == nil {
+			t.Errorf("parsePartitionSpec(%q) expected error, got nil", in)
 		}
 	}
 }
 
-// Round-trip of multiple grow-partition values via Split
-func TestGrowPartitionSlice(t *testing.T) {
-	// ensure SliceVar unmarshals without panic
-	cmd := rootCmd()
-	if err := cmd.ParseFlags([]string{"--grow-partition=label:X:1G", "--grow-partition=name:Y:2G"}); err != nil {
-		t.Fatalf("ParseFlags error: %v", err)
-	}
-	s, err := cmd.Flags().GetStringSlice("grow-partition")
-	if err != nil {
-		t.Fatalf("GetStringSlice error: %v", err)
-	}
-	if !reflect.DeepEqual(s, []string{"label:X:1G", "name:Y:2G"}) {
-		t.Errorf("parsed grow-partition flags = %v, want %v", s, []string{"label:X:1G", "name:Y:2G"})
-	}
+// Shrink parses with an explicit size and, without one, requests shrink-to-fit
+// (Size 0).
+func TestParseShrinkSpec(t *testing.T) {
+	t.Run("explicit size", func(t *testing.T) {
+		s, err := parseShrinkSpec("label:P3:200M")
+		if err != nil {
+			t.Fatalf("parseShrinkSpec error: %v", err)
+		}
+		if s.ID.By() != resizer.IdentifierByLabel || s.ID.Value() != "P3" || s.Size != 200*1024*1024 {
+			t.Errorf("unexpected shrink %+v (size %d)", s.ID, s.Size)
+		}
+	})
+	t.Run("to-fit", func(t *testing.T) {
+		s, err := parseShrinkSpec("uuid:AD..59")
+		if err != nil {
+			t.Fatalf("parseShrinkSpec error: %v", err)
+		}
+		if s.ID.By() != resizer.IdentifierByUUID || s.Size != 0 {
+			t.Errorf("want to-fit (size 0), got %+v (size %d)", s.ID, s.Size)
+		}
+	})
+	t.Run("invalid", func(t *testing.T) {
+		for _, in := range []string{"onlyone", "label:P3:XYZ"} {
+			if _, err := parseShrinkSpec(in); err == nil {
+				t.Errorf("parseShrinkSpec(%q) expected error, got nil", in)
+			}
+		}
+	})
 }
